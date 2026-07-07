@@ -8,29 +8,59 @@ import { useSessionLive, useCloseSession } from '@/lib/attendance/useAttendance'
 import { attendanceApi } from '@/lib/attendance/attendanceApi'
 import { IS_DEMO } from '@/lib/gasClient'
 
-// Client-only QR renderer to avoid SSR issues with canvas
+// Client-only QR renderer. Uses the pure-JS SVG output of the `qrcode`
+// library (QRCode.toString(..., { type: 'svg' })) instead of the canvas
+// API — this is synchronous, has no external DOM element lifecycle to
+// race against React's render cycle, and never throws the intermittent
+// "canvas already in use" / blank-canvas errors the old approach had.
 function QrCanvas({ value, size = 240 }: { value: string; size?: number }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [loaded, setLoaded] = useState(false)
+  const [svgMarkup, setSvgMarkup] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const requestId = useRef(0)
 
   useEffect(() => {
-    if (!value || !ref.current) return
-    ref.current.innerHTML = ''
-    import('qrcode').then(QRCode => {
-      const canvas = document.createElement('canvas')
-      QRCode.toCanvas(canvas, value, {
-        width: size, margin: 2,
-        color: { dark: '#111827', light: '#ffffff' },
+    if (!value) return
+    const myRequest = ++requestId.current
+    setFailed(false)
+    import('qrcode')
+      .then(QRCode =>
+        QRCode.toString(value, {
+          type: 'svg',
+          width: size,
+          margin: 2,
+          color: { dark: '#111827', light: '#ffffff' },
+        })
+      )
+      .then(svg => {
+        // Ignore stale responses if the value changed while this was in flight
+        if (myRequest === requestId.current) setSvgMarkup(svg)
       })
-      ref.current!.appendChild(canvas)
-      setLoaded(true)
-    })
+      .catch(() => {
+        if (myRequest === requestId.current) setFailed(true)
+      })
   }, [value, size])
 
+  if (failed) {
+    return (
+      <div className="w-60 h-60 flex flex-col items-center justify-center gap-2 text-center px-4">
+        <span className="text-3xl">⚠️</span>
+        <p className="text-xs text-gray-500">Couldn&apos;t render the QR code. Try refreshing it above.</p>
+      </div>
+    )
+  }
+
+  if (!svgMarkup) {
+    return <div className="w-60 h-60 flex items-center justify-center"><Spinner size="lg"/></div>
+  }
+
   return (
-    <div ref={ref} className={`transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}>
-      {!loaded && <div className="w-60 h-60 flex items-center justify-center"><Spinner size="lg"/></div>}
-    </div>
+    <div
+      className="transition-opacity duration-300 opacity-100 [&_svg]:block [&_svg]:w-full [&_svg]:h-auto"
+      style={{ width: size, height: size }}
+      // Markup is generated locally by the `qrcode` library from our own
+      // session token — never from user-controlled input.
+      dangerouslySetInnerHTML={{ __html: svgMarkup }}
+    />
   )
 }
 
