@@ -8,7 +8,8 @@
  */
 
 export const GAS_URL = process.env.NEXT_PUBLIC_GAS_URL || ''
-export const IS_DEMO = !GAS_URL
+// IS_DEMO is true when either no backend is configured, OR the user is logged in with a demo account
+export const IS_DEMO = !GAS_URL || (typeof window !== 'undefined' && (localStorage.getItem('imp_token') || '').startsWith('demo-token'))
 
 export interface GasResponse<T = unknown> {
   success: boolean
@@ -22,11 +23,15 @@ function tok() {
   return localStorage.getItem('imp_token') || ''
 }
 
+function isDemoToken() {
+  return tok().startsWith('demo-token-') || tok() === 'demo-token'
+}
+
 export async function gasPost<T = unknown>(
   action: string,
   data: Record<string, unknown> = {}
 ): Promise<T> {
-  if (!GAS_URL) throw new Error('Backend not configured. Add NEXT_PUBLIC_GAS_URL to Vercel environment variables.')
+  if (!GAS_URL || isDemoToken()) throw new Error('DEMO_MODE')
   const res = await fetch(GAS_URL, {
     method: 'POST',
     body: JSON.stringify({ action, token: tok(), data }),
@@ -42,7 +47,7 @@ export async function gasGet<T = unknown>(
   action: string,
   data: Record<string, unknown> = {}
 ): Promise<T> {
-  if (!GAS_URL) throw new Error('Backend not configured. Add NEXT_PUBLIC_GAS_URL to Vercel environment variables.')
+  if (!GAS_URL || isDemoToken()) throw new Error('DEMO_MODE')
   const params = new URLSearchParams({ action, token: tok(), data: JSON.stringify(data) })
   const res = await fetch(`${GAS_URL}?${params}`)
   if (!res.ok) throw new Error(`Network error: ${res.status}`)
@@ -62,12 +67,16 @@ const DEMO_ACCOUNTS: Record<string, { role: string; name: string; centre: string
 }
 
 export async function gasLogin(identifier: string, password: string) {
+  // Demo accounts always work — even when GAS backend is connected.
+  // This lets you test every role without needing sheet entries for them.
+  const acc = DEMO_ACCOUNTS[identifier]
+  if (acc && password === 'Demo@1234') {
+    return { token: 'demo-token-' + acc.role, role: acc.role, id: 'DEMO001', name: acc.name, centre: acc.centre, mustResetPassword: false }
+  }
+
+  // Real login via GAS backend
   if (!GAS_URL) {
-    const acc = DEMO_ACCOUNTS[identifier]
-    if (acc && password === 'Demo@1234') {
-      return { token: 'demo-token', role: acc.role, id: 'DEMO001', name: acc.name, centre: acc.centre, mustResetPassword: false }
-    }
-    throw new Error('Invalid credentials. Use a demo account or add NEXT_PUBLIC_GAS_URL in Vercel.')
+    throw new Error('No backend configured. Use a demo account (e.g. admin@demo.com / Demo@1234) to explore.')
   }
   const res = await fetch(GAS_URL, {
     method: 'POST',

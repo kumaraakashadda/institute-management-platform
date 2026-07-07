@@ -66,6 +66,12 @@ function handleRequest_(action, data, token) {
       // ── Admissions ────────────────────────────────────────────────────────
       case 'createAdmission':
         return ok_(createAdmission_(data.fields, actor));
+      case 'bulkUploadAdmissions':
+        return ok_(bulkUploadAdmissions_(data.rows, actor));
+      case 'bulkUploadStaff':
+        return ok_(bulkUploadStaff_(data.staffType, data.rows, actor));
+      case 'getBulkUploadHistory':
+        return ok_(getBulkUploadHistory_(actor));
 
       // ── Settings & Feature Flags ──────────────────────────────────────────
       case 'listSettings':

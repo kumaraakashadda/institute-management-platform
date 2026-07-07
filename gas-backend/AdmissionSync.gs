@@ -9,7 +9,117 @@
  * a linked Parent account is created too.
  * -----------------------------------------------------------------------
  */
-function createAdmission_(fields, actor) {
+/**
+ * bulkUploadAdmissions_
+ * -----------------------------------------------------------------------
+ * Accepts an array of row objects (already parsed from CSV/Excel by the
+ * frontend) and calls createAdmission_() for each one individually so
+ * every row gets the full auto-creation pipeline (student account, parent
+ * account, QR identity, etc.).
+ *
+ * Returns a per-row result array so the UI can show exactly which rows
+ * succeeded and which failed, with the error message.
+ *
+ * Limits: max 500 rows per call to stay inside GAS's 6-minute
+ * execution limit (~0.7 s per row worst case).
+ */
+function bulkUploadAdmissions_(rows, actor) {
+  requireRole_(actor, ADMISSION_CREATE_ROLES);
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('No rows provided.');
+  if (rows.length > 500) throw new Error('Maximum 500 rows per upload. Split the file and try again.');
+
+  var results = [];
+  var successCount = 0;
+  var errorCount   = 0;
+
+  rows.forEach(function(row, idx) {
+    try {
+      var result = createAdmission_(row, actor);
+      results.push({
+        row: idx + 2, // 1-indexed, +1 for header
+        status: 'success',
+        admission_id: result.admissionId,
+        student_id:   result.studentId,
+        name:         row.Full_Name || '',
+        phone:        row.Phone || '',
+        temp_password: result.studentTempPassword,
+      });
+      successCount++;
+    } catch(e) {
+      results.push({
+        row:    idx + 2,
+        status: 'error',
+        name:   row.Full_Name || '(row ' + (idx+2) + ')',
+        phone:  row.Phone || '',
+        error:  e.message,
+      });
+      errorCount++;
+    }
+  });
+
+  logAudit_(actor.sub, actor.role, 'BULK_UPLOAD_ADMISSIONS', 'Admission_Master', 'bulk',
+    null, { total: rows.length, success: successCount, errors: errorCount });
+
+  return { total: rows.length, success: successCount, errors: errorCount, results: results };
+}
+
+/**
+ * bulkUploadStaff_
+ * -----------------------------------------------------------------------
+ * Creates multiple teacher / counsellor / manager accounts in one call.
+ * staffType: 'Teacher' | 'Counsellor' | 'Manager' | 'Regional_Manager'
+ */
+function bulkUploadStaff_(staffType, rows, actor) {
+  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.CENTRE_MANAGER]);
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('No rows provided.');
+  if (rows.length > 200) throw new Error('Maximum 200 rows per staff upload.');
+
+  var results = [];
+  var successCount = 0;
+  var errorCount   = 0;
+
+  rows.forEach(function(row, idx) {
+    try {
+      var result = createStaff_(staffType, row, actor);
+      results.push({ row: idx + 2, status: 'success', id: result.id, name: row.Full_Name || '', phone: row.Phone || '', temp_password: result.tempPassword });
+      successCount++;
+    } catch(e) {
+      results.push({ row: idx + 2, status: 'error', name: row.Full_Name || '(row ' + (idx+2) + ')', phone: row.Phone || '', error: e.message });
+      errorCount++;
+    }
+  });
+
+  logAudit_(actor.sub, actor.role, 'BULK_UPLOAD_STAFF', staffType, 'bulk', null, { total: rows.length, success: successCount, errors: errorCount });
+  return { total: rows.length, success: successCount, errors: errorCount, results: results };
+}
+
+/**
+ * getBulkUploadHistory_
+ * -----------------------------------------------------------------------
+ * Returns recent bulk upload audit log entries so admins can see what
+ * was uploaded, by whom, and when.
+ */
+function getBulkUploadHistory_(actor) {
+  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.CENTRE_MANAGER]);
+  var rows = readAll_('Audit_Log').filter(function(r) {
+    return r.Action === 'BULK_UPLOAD_ADMISSIONS' || r.Action === 'BULK_UPLOAD_STAFF';
+  });
+  rows.sort(function(a, b) { return new Date(b.Timestamp) - new Date(a.Timestamp); });
+  return rows.slice(0, 50).map(function(r) {
+    var nv = {};
+    try { nv = JSON.parse(r.New_Value || '{}'); } catch(e) {}
+    return {
+      action:    r.Action,
+      user_id:   r.User_ID,
+      role:      r.Role,
+      total:     nv.total || 0,
+      success:   nv.success || 0,
+      errors:    nv.errors  || 0,
+      timestamp: r.Timestamp,
+    };
+  });
+}
+
   requireRole_(actor, ADMISSION_CREATE_ROLES);
 
   var required = ['Full_Name', 'Phone', 'Centre', 'Course', 'Batch', 'Target_Year', 'Segment'];
@@ -95,16 +205,4 @@ function createAdmission_(fields, actor) {
       studentTempPassword: tempPassword
     };
   });
-}
-
-// ================================================================
-// DUPLICATE DETECTION BEFORE ADMISSION
-// ================================================================
-// This is now called inside createAdmission_ before creating the student.
-// The function is defined in Attendance.gs as checkDuplicateAdmission_().
-// We expose it here as a standalone action as well.
-
-function checkAdmissionDuplicate_(phone, email, actor) {
-  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.CENTRE_MANAGER, ROLES.COUNSELLOR]);
-  return checkDuplicateAdmission_(phone, email || '');
 }
