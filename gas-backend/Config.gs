@@ -50,7 +50,7 @@ var SCHEMA = {
   Admission_Master:    ['Admission_ID','Full_Name','DOB','Gender','Phone','Email','Parent_Name','Parent_Phone','Parent_Email','Address','Centre','Course','Batch','Target_Year','Segment','Admission_Date','Counsellor','Registration_Fee_Paid','Status','Created_At','Created_By'],
 
   // ── Master / Reference Data ─────────────────────────────────────────────
-  Centres:             ['Centre_ID','Centre_Name','Address','City','State','Phone','Email','Status','Created_At'],
+  Centres:             ['Centre_ID','Centre_Name','Address','City','State','Phone','Email','Latitude','Longitude','Status','Created_At'],
   Courses:             ['Course_ID','Course_Name','Description','Status'],
   Batches:             ['Batch_ID','Batch_Name','Centre','Course','Target_Year','Segment','Start_Date','End_Date','Status'],
   Subjects:            ['Subject_ID','Subject_Name','Course','Status'],
@@ -64,7 +64,7 @@ var SCHEMA = {
   System_Logs:         ['Log_ID','Level','Message','Source','Timestamp'],
 
   // ── Attendance (tables ready; logic = Milestone 4) ───────────────────────
-  Attendance_Sessions:    ['Session_ID','Centre','Batch','Course','Subject','Teacher_ID','Classroom','Start_Time','Duration_Minutes','Grace_Minutes','Expiry_Time','QR_Token','Status','Created_At'],
+  Attendance_Sessions:    ['Session_ID','Centre','Batch','Course','Subject','Teacher_ID','Classroom','Start_Time','Duration_Minutes','Grace_Minutes','Expiry_Time','QR_Token','Teacher_GPS_Lat','Teacher_GPS_Lng','Status','Created_At'],
   Attendance_Log:         ['Log_ID','Session_ID','Student_ID','Timestamp','IP','GPS_Lat','GPS_Lng','Device','Browser','OS','Network','Classroom','Status','Created_At'],
   Attendance_Corrections: ['Correction_ID','Session_ID','Student_ID','Original_Status','Corrected_Status','Reason','Approved_By','Timestamp'],
   Student_Devices:        ['Device_ID','Student_ID','Device_Fingerprint','Registered_At','Status'],
