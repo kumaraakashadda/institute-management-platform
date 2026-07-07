@@ -14,9 +14,7 @@ const NAV: Record<string, NavItem[]> = {
     { href: '/dashboard/fees/crm',       label: 'CRM Pipeline', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
     { href: '/dashboard/fees/plans',     label: 'Fee Plans',    icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
     { href: '/dashboard/fees/reports',   label: 'Reports',      icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-    { href: '/dashboard/attendance',     label: 'Attendance',   icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { href: '/dashboard/fees/upload',    label: 'Bulk Upload',  icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12' },
-    { href: '/dashboard/settings',       label: 'Settings',     icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
+    { href: '/dashboard/attendance',     label: 'Attendance',   icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z', badge: 'M4' },
   ],
   CENTRE_MANAGER: [
     { href: '/dashboard/centre',         label: 'Overview',     icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
@@ -89,6 +87,7 @@ function ThemeToggle() {
 
 export function DashboardShell({ children, title }: { children: React.ReactNode; title?: string }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [notifOpen, setNotifOpen]     = useState(false)
   const { role, name, logout } = useAuthStore()
   const pathname = usePathname()
   const router   = useRouter()
@@ -97,6 +96,58 @@ export function DashboardShell({ children, title }: { children: React.ReactNode;
   const initials  = (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 
   useEffect(() => { setSidebarOpen(false) }, [pathname])
+
+  // Close notification panel when clicking outside
+  useEffect(() => {
+    if (!notifOpen) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('#notif-panel') && !target.closest('#notif-btn')) {
+        setNotifOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [notifOpen])
+
+  // Demo notifications — role-specific
+  const DEMO_NOTIFS: Record<string, { icon: string; title: string; body: string; time: string; unread: boolean }[]> = {
+    TEACHER: [
+      { icon: '📋', title: 'Session auto-closed', body: 'JEE-2026-A Physics session closed — 42/45 present', time: '2 min ago', unread: true },
+      { icon: '⚠️', title: 'Low attendance alert', body: 'Student Ravi Kumar is below 75% threshold', time: '1 hr ago', unread: true },
+      { icon: '✅', title: 'Leave approved', body: 'Your leave request for Jul 10 was approved', time: '3 hrs ago', unread: false },
+    ],
+    STUDENT: [
+      { icon: '📢', title: 'Attendance marked', body: 'Your attendance for Physics (today) is confirmed', time: '5 min ago', unread: true },
+      { icon: '💰', title: 'Fee reminder', body: 'Installment 2 of ₹8,500 is due on Jul 15', time: '2 hrs ago', unread: true },
+      { icon: '📅', title: 'Class rescheduled', body: 'Chemistry class moved to 11:00 AM tomorrow', time: 'Yesterday', unread: false },
+    ],
+    PARENT: [
+      { icon: '📊', title: "Child attendance update", body: 'Arjun attended 4/5 classes this week (80%)', time: '30 min ago', unread: true },
+      { icon: '💰', title: 'Fee due soon', body: 'Installment of ₹8,500 due in 3 days', time: '1 day ago', unread: true },
+    ],
+    SUPER_ADMIN: [
+      { icon: '🏫', title: 'New admission', body: '12 new admissions recorded this month', time: '1 hr ago', unread: true },
+      { icon: '⚠️', title: 'System alert', body: '3 students below 60% attendance — needs action', time: '3 hrs ago', unread: true },
+      { icon: '💰', title: 'Collection milestone', body: 'Monthly collection crossed ₹3.8L today', time: 'Today', unread: false },
+      { icon: '📋', title: 'Report ready', body: 'July monthly attendance report generated', time: 'Yesterday', unread: false },
+    ],
+    CENTRE_MANAGER: [
+      { icon: '👥', title: 'Session started', body: 'Teacher Meera started Physics session — Room 201', time: '5 min ago', unread: true },
+      { icon: '⚠️', title: 'Defaulter alert', body: '5 students are below attendance threshold', time: '2 hrs ago', unread: true },
+      { icon: '💰', title: 'Payment received', body: '₹12,000 collected — Rahul Sharma Installment 2', time: '4 hrs ago', unread: false },
+    ],
+    COUNSELLOR: [
+      { icon: '💰', title: 'Fee due today', body: '4 students have installments due today', time: '1 hr ago', unread: true },
+      { icon: '📞', title: 'Follow-up reminder', body: 'Call Priya Singh — overdue since Jul 1', time: '2 hrs ago', unread: true },
+    ],
+    REGIONAL_MANAGER: [
+      { icon: '📊', title: 'Weekly summary', body: 'Delhi region: 83% avg attendance this week', time: '2 hrs ago', unread: true },
+      { icon: '🏆', title: 'Top performer', body: 'Delhi Rohini centre: 91% attendance rate', time: 'Today', unread: false },
+    ],
+  }
+  const notifs = DEMO_NOTIFS[role || ''] || DEMO_NOTIFS['SUPER_ADMIN']
+  const unreadCount = notifs.filter(n => n.unread).length
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#0a0f1e] flex">
@@ -222,13 +273,73 @@ export function DashboardShell({ children, title }: { children: React.ReactNode;
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* Notification bell */}
-            <button className="w-9 h-9 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all relative">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-red-500" />
-            </button>
+            {/* Notification bell + dropdown */}
+            <div className="relative">
+              <button id="notif-btn"
+                onClick={() => setNotifOpen(o => !o)}
+                className="w-9 h-9 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all relative">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification panel */}
+              {notifOpen && (
+                <div id="notif-panel"
+                  className="absolute right-0 top-11 w-80 bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-800 z-50 overflow-hidden">
+                  {/* Header */}
+                  <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-gray-900 dark:text-white">Notifications</span>
+                      {unreadCount > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                          {unreadCount} new
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setNotifOpen(false)}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium">
+                      Mark all read
+                    </button>
+                  </div>
+
+                  {/* Notification items */}
+                  <div className="max-h-80 overflow-y-auto divide-y divide-gray-50 dark:divide-gray-800">
+                    {notifs.map((n, i) => (
+                      <div key={i}
+                        className={`px-4 py-3 flex gap-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/60 transition-all ${n.unread ? 'bg-blue-50/40 dark:bg-blue-900/10' : ''}`}>
+                        <div className="w-8 h-8 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-base shrink-0">
+                          {n.icon}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-1">
+                            <p className="text-xs font-semibold text-gray-900 dark:text-white leading-tight">{n.title}</p>
+                            {n.unread && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 mt-1" />}
+                          </div>
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">{n.body}</p>
+                          <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-1">{n.time}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="px-4 py-2.5 border-t border-gray-100 dark:border-gray-800 text-center">
+                    <button
+                      onClick={() => { setNotifOpen(false); router.push('/dashboard/student/notifications') }}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium">
+                      View all notifications →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <ThemeToggle />
 
