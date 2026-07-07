@@ -32,6 +32,19 @@ function getSettingVal_(key, fallback) {
   } catch(e) { return fallback; }
 }
 
+/** Great-circle distance between two lat/lng points, in metres. */
+function haversineMeters_(lat1, lng1, lat2, lng2) {
+  var R = 6371000; // Earth radius in metres
+  var toRad = function(d) { return d * Math.PI / 180; };
+  var dLat = toRad(lat2 - lat1);
+  var dLng = toRad(lng2 - lng1);
+  var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+          Math.sin(dLng/2) * Math.sin(dLng/2);
+  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
 // ================================================================
 // SECTION 1 — SESSION LIFECYCLE
 // ================================================================
@@ -47,6 +60,12 @@ function createAttendanceSession_(fields, actor) {
   required.forEach(function(f) {
     if (!fields[f]) throw new Error('Missing required field: ' + f);
   });
+
+  var gpsRequired = isFeatureEnabled_('ENABLE_GPS_VALIDATION');
+  if (gpsRequired && (fields.Teacher_GPS_Lat === undefined || fields.Teacher_GPS_Lat === '' ||
+                      fields.Teacher_GPS_Lng === undefined || fields.Teacher_GPS_Lng === '')) {
+    throw new Error('GPS location is required to start this session. Please enable location access and try again.');
+  }
 
   return withLock_(function() {
     var sessionId  = nextId_('Attendance_Sessions', 'SES', 'Session_ID');
@@ -72,6 +91,8 @@ function createAttendanceSession_(fields, actor) {
       Grace_Minutes:    fields.Grace_Minutes || 5,
       Expiry_Time:      expiryTime.toISOString(),
       QR_Token:         token.token,
+      Teacher_GPS_Lat:  fields.Teacher_GPS_Lat || '',
+      Teacher_GPS_Lng:  fields.Teacher_GPS_Lng || '',
       Status:           'Active',
       Created_At:       now.toISOString(),
     };
@@ -312,6 +333,34 @@ function recordAttendance_(scanData, deviceInfo, actor) {
         new Date(existing[0].Timestamp).toLocaleTimeString('en-IN'));
     }
 
+    // ── Validation 9: GPS proximity (only when enabled in Settings) ─
+    var gpsStatus = 'NOT_REQUIRED';
+    if (isFeatureEnabled_('ENABLE_GPS_VALIDATION')) {
+      var studentLat = deviceInfo.gps_lat, studentLng = deviceInfo.gps_lng;
+      if (studentLat === undefined || studentLat === '' || studentLat === null ||
+          studentLng === undefined || studentLng === '' || studentLng === null) {
+        throw new Error('Location access is required to mark attendance. Please enable location and try again.');
+      }
+      // Reference point: the teacher's location captured when the session was created,
+      // falling back to the centre's registered location if the teacher's GPS was unavailable.
+      var refLat = session.Teacher_GPS_Lat, refLng = session.Teacher_GPS_Lng;
+      if (!refLat || !refLng) {
+        var centreRow = findOne_('Centres', 'Centre_Name', session.Centre) || findOne_('Centres', 'Centre_ID', session.Centre);
+        if (centreRow && centreRow.Latitude && centreRow.Longitude) {
+          refLat = centreRow.Latitude; refLng = centreRow.Longitude;
+        }
+      }
+      if (!refLat || !refLng) {
+        throw new Error('GPS validation is enabled but no reference location is set for this session or centre. Please contact your administrator.');
+      }
+      var radius = Number(getSettingVal_('GPS_RADIUS_METERS', 150));
+      var distance = haversineMeters_(Number(refLat), Number(refLng), Number(studentLat), Number(studentLng));
+      if (distance > radius) {
+        throw new Error('You appear to be ' + Math.round(distance) + 'm away from the classroom (allowed: ' + radius + 'm). Move closer and try again.');
+      }
+      gpsStatus = 'VERIFIED (' + Math.round(distance) + 'm)';
+    }
+
     // ── All validations passed — record attendance ───────────────
     var logId = nextId_('Attendance_Log', 'LOG', 'Log_ID');
     var log = {
@@ -348,6 +397,7 @@ function recordAttendance_(scanData, deviceInfo, actor) {
       course:        session.Course,
       timestamp:     now.toISOString(),
       present_count: presentCount,
+      gps_status:    gpsStatus,
     };
   });
 }
@@ -848,170 +898,4 @@ function setupAttendanceTrigger() {
     .everyMinutes(1)
     .create();
   Logger.log('Attendance auto-close trigger set up — runs every 1 minute.');
-}
-
-// ================================================================
-// SECTION 11 — ATTENDANCE CERTIFICATE
-// ================================================================
-
-/**
- * Generates a professional attendance certificate PDF via DriveApp.
- * Stores in Drive, returns public download URL.
- * Can be called on-demand by student or admin.
- */
-function generateAttendanceCertificate_(studentId, filters, actor) {
-  var student = findOne_('Students', 'Student_ID', studentId);
-  if (!student) throw new Error('Student not found: ' + studentId);
-
-  var logs    = readAll_('Attendance_Log').filter(function (l) { return l.Student_ID === studentId; });
-
-  // Apply date filters if provided
-  if (filters && filters.from_date) {
-    var from = new Date(filters.from_date);
-    logs = logs.filter(function (l) { return new Date(l.Timestamp) >= from; });
-  }
-  if (filters && filters.to_date) {
-    var to = new Date(filters.to_date); to.setHours(23, 59, 59, 999);
-    logs = logs.filter(function (l) { return new Date(l.Timestamp) <= to; });
-  }
-
-  var total   = logs.length;
-  var present = logs.filter(function (l) { return l.Status === 'Present' || l.Status === 'Late'; }).length;
-  var pct     = total > 0 ? Math.round(present / total * 100) : 0;
-  var institute = getSettingVal_('INSTITUTE_NAME', 'Institute Management Platform');
-  var certNo  = 'CERT-' + studentId + '-' + Date.now().toString().slice(-6);
-  var fromStr = filters && filters.from_date ? filters.from_date : (logs.length ? logs[0].Timestamp.split('T')[0] : 'N/A');
-  var toStr   = filters && filters.to_date   ? filters.to_date   : new Date().toISOString().split('T')[0];
-
-  var colour  = pct >= 75 ? '#10b981' : pct >= 60 ? '#f59e0b' : '#ef4444';
-
-  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
-    + 'body{font-family:Georgia,serif;margin:0;padding:0;background:#fff}'
-    + '.page{width:794px;min-height:1123px;margin:auto;padding:60px;box-sizing:border-box;border:12px solid #1e40af;position:relative}'
-    + '.inner{border:2px solid #93c5fd;padding:40px;min-height:900px}'
-    + 'h1{color:#1e40af;font-size:32px;text-align:center;margin-bottom:4px}'
-    + '.subtitle{text-align:center;color:#64748b;font-size:13px;margin-bottom:40px;letter-spacing:2px;text-transform:uppercase}'
-    + '.seal{text-align:center;font-size:80px;margin:20px 0}'
-    + '.body{font-size:15px;line-height:1.9;color:#374151;text-align:center;margin:30px 0}'
-    + '.pct{font-size:56px;font-weight:900;color:' + colour + ';text-align:center;margin:20px 0}'
-    + '.details{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:30px 0;font-size:13px}'
-    + '.detail-item{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px}'
-    + '.detail-label{color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:1px}'
-    + '.detail-value{color:#1e293b;font-weight:bold;margin-top:4px;font-size:14px}'
-    + '.footer{text-align:center;margin-top:40px;padding-top:20px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px}'
-    + '.sig-line{display:inline-block;width:200px;border-bottom:1px solid #374151;margin-top:40px}'
-    + '</style></head><body><div class="page"><div class="inner">'
-    + '<h1>' + institute + '</h1>'
-    + '<div class="subtitle">Certificate of Attendance</div>'
-    + '<div class="seal">🎓</div>'
-    + '<div class="body">This is to certify that</div>'
-    + '<div style="font-size:26px;font-weight:900;color:#1e293b;text-align:center;margin:8px 0">' + student.Full_Name + '</div>'
-    + '<div style="text-align:center;color:#64748b;margin-bottom:20px">' + student.Student_ID + ' | ' + student.Course + ' | ' + student.Batch + '</div>'
-    + '<div class="body">has maintained an overall attendance of</div>'
-    + '<div class="pct">' + pct + '%</div>'
-    + '<div class="body">(' + present + ' out of ' + total + ' classes attended)<br>from <strong>' + fromStr + '</strong> to <strong>' + toStr + '</strong></div>'
-    + '<div class="details">'
-    + '<div class="detail-item"><div class="detail-label">Centre</div><div class="detail-value">' + student.Centre + '</div></div>'
-    + '<div class="detail-item"><div class="detail-label">Course</div><div class="detail-value">' + student.Course + '</div></div>'
-    + '<div class="detail-item"><div class="detail-label">Certificate No.</div><div class="detail-value">' + certNo + '</div></div>'
-    + '<div class="detail-item"><div class="detail-label">Issue Date</div><div class="detail-value">' + new Date().toLocaleDateString('en-IN') + '</div></div>'
-    + '</div>'
-    + '<div style="text-align:center;margin-top:40px">'
-    + '<div class="sig-line"></div><br>'
-    + '<div style="font-size:12px;color:#374151;margin-top:8px">Authorized Signatory</div>'
-    + '<div style="font-size:11px;color:#94a3b8">' + institute + '</div>'
-    + '</div>'
-    + '<div class="footer">This certificate was digitally generated by ' + institute + ' on ' + new Date().toLocaleString('en-IN')
-    + ' and can be verified at the institute. Certificate No: ' + certNo + '</div>'
-    + '</div></div></body></html>';
-
-  var folder = getOrCreateCertFolder_(studentId);
-  var blob   = Utilities.newBlob(html, 'text/html').getAs('application/pdf');
-  blob.setName('AttendanceCertificate_' + studentId + '_' + Date.now() + '.pdf');
-  var file   = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-  logAudit_(actor ? actor.sub : studentId, actor ? actor.role : 'STUDENT', 'GENERATE_CERTIFICATE', 'Attendance_Log', studentId, null, { cert_no: certNo, pct: pct });
-  return { url: file.getDownloadUrl(), cert_no: certNo, pct: pct, present: present, total: total };
-}
-
-function getOrCreateCertFolder_(studentId) {
-  var root = DriveApp.getRootFolder();
-  var imp  = root.getFoldersByName('IMP_Certificates');
-  var base = imp.hasNext() ? imp.next() : root.createFolder('IMP_Certificates');
-  var sf   = base.getFoldersByName(studentId);
-  return sf.hasNext() ? sf.next() : base.createFolder(studentId);
-}
-
-// ================================================================
-// SECTION 12 — DUPLICATE DETECTION
-// ================================================================
-
-function checkDuplicateAdmission_(phone, email) {
-  var students = readAll_('Students');
-  var byPhone  = students.filter(function (s) { return s.Phone === phone && s.Status !== 'Deleted'; });
-  var byEmail  = email ? students.filter(function (s) { return s.Email && s.Email.toLowerCase() === email.toLowerCase() && s.Status !== 'Deleted'; }) : [];
-  return {
-    phone_duplicate: byPhone.length > 0 ? byPhone[0] : null,
-    email_duplicate: byEmail.length > 0 ? byEmail[0] : null,
-    has_duplicate:   byPhone.length > 0 || byEmail.length > 0,
-  };
-}
-
-// ================================================================
-// SECTION 13 — GLOBAL ADMIN FILTERS (attendance stats with filters)
-// ================================================================
-
-function getFilteredAttendanceStats_(filters, actor) {
-  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.REGIONAL_MANAGER, ROLES.CENTRE_MANAGER]);
-  var sessions = readAll_('Attendance_Sessions');
-  var logs     = readAll_('Attendance_Log');
-
-  if (filters.centre)      sessions = sessions.filter(function (s) { return s.Centre === filters.centre; });
-  if (filters.batch)       sessions = sessions.filter(function (s) { return s.Batch  === filters.batch;  });
-  if (filters.course)      sessions = sessions.filter(function (s) { return s.Course === filters.course; });
-  if (filters.subject)     sessions = sessions.filter(function (s) { return s.Subject=== filters.subject;});
-  if (filters.teacher_id)  sessions = sessions.filter(function (s) { return s.Teacher_ID === filters.teacher_id; });
-  if (filters.from_date) {
-    var from = new Date(filters.from_date);
-    sessions = sessions.filter(function (s) { return new Date(s.Start_Time) >= from; });
-  }
-  if (filters.to_date) {
-    var to = new Date(filters.to_date); to.setHours(23, 59, 59, 999);
-    sessions = sessions.filter(function (s) { return new Date(s.Start_Time) <= to; });
-  }
-
-  var sessionIds = new Set(sessions.map(function (s) { return s.Session_ID; }));
-  var filteredLogs = logs.filter(function (l) { return sessionIds.has(l.Session_ID); });
-
-  if (filters.student_id)  filteredLogs = filteredLogs.filter(function (l) { return l.Student_ID === filters.student_id; });
-
-  var total   = filteredLogs.length;
-  var present = filteredLogs.filter(function (l) { return l.Status === 'Present' || l.Status === 'Late'; }).length;
-  var absent  = filteredLogs.filter(function (l) { return l.Status === 'Absent'; }).length;
-  var late    = filteredLogs.filter(function (l) { return l.Status === 'Late'; }).length;
-
-  // Daily trend for charting
-  var byDay = {};
-  filteredLogs.forEach(function (l) {
-    var d = String(l.Timestamp || l.Created_At || '').slice(0, 10);
-    if (!d) return;
-    if (!byDay[d]) byDay[d] = { date: d, present: 0, absent: 0, late: 0, total: 0 };
-    byDay[d][l.Status.toLowerCase()] = (byDay[d][l.Status.toLowerCase()] || 0) + 1;
-    byDay[d].total += 1;
-  });
-  var trend = Object.values(byDay).sort(function (a, b) { return a.date.localeCompare(b.date); }).map(function (d) {
-    return Object.assign(d, { pct: d.total > 0 ? Math.round(d.present / d.total * 100) : 0 });
-  });
-
-  return {
-    total_sessions:  sessions.length,
-    total_logs:      total,
-    present:         present,
-    absent:          absent,
-    late:            late,
-    overall_pct:     total > 0 ? Math.round(present / total * 100) : 0,
-    trend:           trend,
-    filters_applied: filters,
-  };
 }
