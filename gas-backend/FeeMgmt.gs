@@ -193,6 +193,95 @@ function generateInstallments_(studentId, plan, netFee, regPaid, startDate, cust
   }
 }
 
+/**
+ * Manually adds a new installment to a student's schedule at any time
+ * (independent of the auto-generated schedule). Renumbers nothing —
+ * new installments simply take the next sequence number so history
+ * stays stable.
+ */
+function createInstallment_(studentId, fields, actor) {
+  requireRole_(actor, FEE_WRITE_ROLES);
+  var required = ['Due_Date', 'Installment_Amount'];
+  required.forEach(function(f){ if (fields[f] === undefined || fields[f] === '') throw new Error('Missing required field: ' + f); });
+
+  return withLock_(function(){
+    var feeRow = findOne_('Student_Fees','Student_ID', studentId);
+    if (!feeRow) throw new Error('No fee record found for student ' + studentId + '. Assign a fee plan first.');
+
+    var existing = readAll_('Fee_Installments').filter(function(r){
+      return String(r.Student_ID) === String(studentId) && r.Status !== 'Deleted';
+    });
+    var nextNumber = existing.reduce(function(max, r){ return Math.max(max, Number(r.Installment_Number || 0)); }, 0) + 1;
+    var amount = Number(fields.Installment_Amount);
+
+    var instId = nextId_('Fee_Installments','INS','Installment_ID');
+    var record = {
+      Installment_ID:        instId,
+      Student_ID:            studentId,
+      Installment_Number:    nextNumber,
+      Due_Date:              fields.Due_Date,
+      Installment_Amount:    amount,
+      Paid_Amount:           0,
+      Pending_Amount:        amount,
+      Payment_Date:          '',
+      Payment_Mode:          '',
+      Transaction_Reference: '',
+      Status:                'Pending',
+      Remarks:               fields.Remarks || 'Manually added'
+    };
+    appendRow_('Fee_Installments', record);
+    recalcStudentFees_(studentId);
+    logAudit_(actor.sub, actor.role, 'CREATE', 'Fee_Installments', instId, null, record);
+    return record;
+  });
+}
+
+/**
+ * Edits an existing, not-yet-paid installment: amount, due date, or
+ * remarks. This is distinct from rescheduleInstallment_ (date-only)
+ * and gives admins full control to correct mistakes at any time.
+ * Editing the amount keeps Pending_Amount in sync automatically.
+ */
+function updateInstallment_(installmentId, patch, actor) {
+  requireRole_(actor, FEE_WRITE_ROLES);
+  return withLock_(function(){
+    var row = findOne_('Fee_Installments','Installment_ID', installmentId);
+    if (!row) throw new Error('Installment ' + installmentId + ' not found.');
+    if (row.Status === 'Paid') throw new Error('Cannot edit a fully paid installment. Delete and recreate it if truly necessary.');
+
+    var safePatch = {};
+    if (patch.Due_Date !== undefined) safePatch.Due_Date = patch.Due_Date;
+    if (patch.Remarks  !== undefined) safePatch.Remarks  = patch.Remarks;
+    if (patch.Installment_Amount !== undefined) {
+      var newAmount = Number(patch.Installment_Amount);
+      var alreadyPaid = Number(row.Paid_Amount || 0);
+      if (newAmount < alreadyPaid) throw new Error('New amount (₹' + newAmount + ') cannot be less than the amount already paid against it (₹' + alreadyPaid + ').');
+      safePatch.Installment_Amount = newAmount;
+      safePatch.Pending_Amount = newAmount - alreadyPaid;
+      safePatch.Status = alreadyPaid >= newAmount ? 'Paid' : alreadyPaid > 0 ? 'Partial' : 'Pending';
+    }
+
+    var updated = updateRow_('Fee_Installments', row._row, safePatch);
+    recalcStudentFees_(row.Student_ID);
+    logAudit_(actor.sub, actor.role, 'UPDATE', 'Fee_Installments', installmentId, row, updated);
+    return updated;
+  });
+}
+
+/** Deletes (soft) an installment that has no payment recorded against it. */
+function deleteInstallment_(installmentId, actor) {
+  requireRole_(actor, FEE_WRITE_ROLES);
+  return withLock_(function(){
+    var row = findOne_('Fee_Installments','Installment_ID', installmentId);
+    if (!row) throw new Error('Installment ' + installmentId + ' not found.');
+    if (Number(row.Paid_Amount || 0) > 0) throw new Error('Cannot delete an installment that already has a payment recorded against it.');
+    softDeleteRow_('Fee_Installments', row._row);
+    recalcStudentFees_(row.Student_ID);
+    logAudit_(actor.sub, actor.role, 'DELETE', 'Fee_Installments', installmentId, row, null);
+    return true;
+  });
+}
+
 function getStudentFeeProfile_(studentId) {
   var fee   = findOne_('Student_Fees','Student_ID', studentId);
   if (!fee) return null;
@@ -347,11 +436,35 @@ function splitInstallment_(installmentId, splitAmounts, splitDates, actor) {
  * Records a payment, updates the installment status, recalculates
  * the Student_Fees totals, and returns a receipt number.
  * All in one atomic (locked) transaction.
+ *
+ * fields.Installment_ID (optional) — apply the payment against this
+ *   specific installment first. If omitted, applies oldest-due-first
+ *   as before.
+ *
+ * fields.Partial_Handling (optional, only matters when a payment is
+ *   less than the targeted installment's pending amount, or when a
+ *   payment amount doesn't exactly clear the affected installment(s)):
+ *   - 'carry' (default)      — leave the shortfall as Pending_Amount
+ *                              on the same installment (today's behaviour).
+ *   - 'redistribute'         — spread the shortfall proportionally
+ *                              across the student's remaining future
+ *                              (unpaid) installments, and mark the
+ *                              affected installment fully settled.
+ *   - 'new_due'              — create a brand-new installment entry
+ *                              for the shortfall, due on
+ *                              fields.New_Due_Date (or +7 days),
+ *                              and mark the affected installment
+ *                              fully settled.
  */
 function recordPayment_(fields, actor) {
   requireRole_(actor, FEE_WRITE_ROLES);
   var required = ['Student_ID','Amount','Payment_Mode'];
   required.forEach(function(f){ if (!fields[f]) throw new Error('Missing field: ' + f); });
+
+  var partialHandling = fields.Partial_Handling || 'carry';
+  if (['carry','redistribute','new_due'].indexOf(partialHandling) === -1) {
+    throw new Error('Invalid Partial_Handling value. Use "carry", "redistribute", or "new_due".');
+  }
 
   return withLock_(function(){
     var studentId   = fields.Student_ID;
@@ -376,19 +489,49 @@ function recordPayment_(fields, actor) {
     };
     appendRow_('Fee_Payments', payment);
 
-    // 2. Apply payment to outstanding installments (oldest first)
-    var remaining = amount;
-    var insts = readAll_('Fee_Installments')
+    // 2. Work out which installment(s) this payment applies to.
+    //    If Installment_ID is given, that one goes first; any leftover
+    //    still flows into the next-oldest-due installments (unchanged
+    //    behaviour), same as before.
+    var allOpen = readAll_('Fee_Installments')
       .filter(function(r){ return String(r.Student_ID) === String(studentId) && r.Status !== 'Paid' && r.Status !== 'Deleted'; })
       .sort(function(a,b){ return new Date(a.Due_Date) - new Date(b.Due_Date); });
 
-    insts.forEach(function(inst){
+    var targeted = null;
+    if (fields.Installment_ID) {
+      targeted = allOpen.filter(function(r){ return String(r.Installment_ID) === String(fields.Installment_ID); })[0];
+      if (!targeted) throw new Error('Installment ' + fields.Installment_ID + ' not found or already paid.');
+      allOpen = [targeted].concat(allOpen.filter(function(r){ return String(r.Installment_ID) !== String(fields.Installment_ID); }));
+    }
+
+    var remaining = amount;
+    var shortfallHandled = false; // only handle shortfall once, on the primary (first) installment touched
+
+    allOpen.forEach(function(inst) {
       if (remaining <= 0) return;
-      var pending = Number(inst.Pending_Amount);
+      var pending  = Number(inst.Pending_Amount);
       var applying = Math.min(remaining, pending);
       var newPaid  = Number(inst.Paid_Amount) + applying;
       var newPending = pending - applying;
-      var newStatus  = newPending <= 0 ? 'Paid' : 'Partial';
+
+      // Is this a genuine partial payment against THIS specific installment
+      // (i.e. the payment ran out of money exactly here, mid-installment)?
+      var isShortfallHere = newPending > 0 && remaining - applying <= 0 && !shortfallHandled;
+
+      if (isShortfallHere && partialHandling !== 'carry') {
+        shortfallHandled = true;
+        if (partialHandling === 'redistribute') {
+          redistributeShortfall_(studentId, newPending, inst.Installment_ID);
+        } else if (partialHandling === 'new_due') {
+          var newDueDate = fields.New_Due_Date || addDays_(today, 7);
+          createShortfallInstallment_(studentId, newPending, newDueDate, actor, inst.Installment_ID);
+        }
+        // The touched installment is now considered fully settled — its
+        // remaining balance has been moved elsewhere.
+        newPending = 0;
+      }
+
+      var newStatus = newPending <= 0 ? 'Paid' : 'Partial';
       updateRow_('Fee_Installments', inst._row, {
         Paid_Amount:    newPaid,
         Pending_Amount: newPending,
@@ -407,6 +550,77 @@ function recordPayment_(fields, actor) {
     logAudit_(actor.sub, actor.role, 'PAYMENT', 'Fee_Payments', paymentId, null, payment);
     return { payment: payment, receipt_number: receiptNo };
   });
+}
+
+/** Adds `days` (integer) to a YYYY-MM-DD date string. */
+function addDays_(dateStr, days) {
+  var d = new Date(dateStr);
+  d.setDate(d.getDate() + Number(days));
+  return d.toISOString().split('T')[0];
+}
+
+/**
+ * Spreads `extraAmount` proportionally across a student's remaining
+ * future (unpaid, non-deleted) installments — excluding the one that
+ * just generated the shortfall. Each future installment's amount and
+ * pending balance grow in proportion to its current share of the
+ * total remaining balance. If there are no future installments left,
+ * falls back to creating a new due-date entry instead.
+ */
+function redistributeShortfall_(studentId, extraAmount, excludeInstallmentId) {
+  var future = readAll_('Fee_Installments').filter(function(r){
+    return String(r.Student_ID) === String(studentId)
+      && r.Status !== 'Deleted' && r.Status !== 'Paid'
+      && String(r.Installment_ID) !== String(excludeInstallmentId);
+  });
+  if (future.length === 0) {
+    // Nothing to redistribute onto — create a fresh due entry instead.
+    var fallbackDate = addDays_(new Date().toISOString().split('T')[0], 7);
+    createShortfallInstallment_(studentId, extraAmount, fallbackDate, null, excludeInstallmentId);
+    return;
+  }
+
+  var totalPending = future.reduce(function(s,r){ return s + Number(r.Pending_Amount); }, 0);
+  var distributed = 0;
+
+  future.forEach(function(inst, idx) {
+    var share = totalPending > 0 ? Number(inst.Pending_Amount) / totalPending : 1 / future.length;
+    var addAmount = (idx === future.length - 1)
+      ? (extraAmount - distributed) // last one absorbs rounding remainder
+      : Math.round(extraAmount * share);
+    distributed += addAmount;
+
+    updateRow_('Fee_Installments', inst._row, {
+      Installment_Amount: Number(inst.Installment_Amount) + addAmount,
+      Pending_Amount:     Number(inst.Pending_Amount) + addAmount,
+      Remarks:            (inst.Remarks ? inst.Remarks + ' | ' : '') + 'Absorbed ₹' + addAmount + ' redistributed from ' + excludeInstallmentId
+    });
+  });
+}
+
+/** Creates a brand-new installment entry to collect a shortfall balance. */
+function createShortfallInstallment_(studentId, amount, dueDate, actor, sourceInstallmentId) {
+  var existing = readAll_('Fee_Installments').filter(function(r){
+    return String(r.Student_ID) === String(studentId) && r.Status !== 'Deleted';
+  });
+  var nextNumber = existing.reduce(function(max, r){ return Math.max(max, Number(r.Installment_Number || 0)); }, 0) + 1;
+  var instId = nextId_('Fee_Installments','INS','Installment_ID');
+  appendRow_('Fee_Installments', {
+    Installment_ID:        instId,
+    Student_ID:            studentId,
+    Installment_Number:    nextNumber,
+    Due_Date:              dueDate,
+    Installment_Amount:    amount,
+    Paid_Amount:           0,
+    Pending_Amount:        amount,
+    Payment_Date:          '',
+    Payment_Mode:          '',
+    Transaction_Reference: '',
+    Status:                'Pending',
+    Remarks:               'Pending balance carried forward from ' + sourceInstallmentId
+  });
+  if (actor) logAudit_(actor.sub, actor.role, 'CREATE', 'Fee_Installments', instId, null, { carried_from: sourceInstallmentId, amount: amount });
+  return instId;
 }
 
 function generateReceiptNumber_() {
@@ -1155,212 +1369,4 @@ function getStudentLedger_(studentId, actor) {
 function assignFeePlanToStudent_(studentId, planId, overrides, actor) {
   requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.CENTRE_MANAGER, ROLES.COUNSELLOR]);
   return assignFeePlan_(studentId, planId, overrides || {}, actor);
-}
-
-// ================================================================
-// SECTION 13 — BULK UPLOAD (Excel / Google Sheet import)
-// ================================================================
-
-/**
- * bulkImportStudentFees_ — accepts an array of row objects parsed from
- * an Excel/CSV upload and processes them in order:
- *   1. Find or validate student
- *   2. Find or create fee plan
- *   3. Assign plan + generate installments
- *   4. Record any payments already noted in the sheet
- * Returns { success, failed, errors } so the frontend can show a summary.
- */
-function bulkImportStudentFees_(rows, actor) {
-  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.CENTRE_MANAGER]);
-  if (!Array.isArray(rows) || rows.length === 0) throw new Error('No rows provided');
-
-  var results = { success: 0, failed: 0, errors: [] };
-
-  rows.forEach(function (row, idx) {
-    try {
-      // Validate required columns
-      if (!row.Student_ID && !row.Phone) throw new Error('Row ' + (idx + 1) + ': Student_ID or Phone required');
-
-      // Find student
-      var student = row.Student_ID
-        ? findOne_('Students', 'Student_ID', row.Student_ID)
-        : readAll_('Students').find(function (s) { return s.Phone === row.Phone; });
-      if (!student) throw new Error('Student not found: ' + (row.Student_ID || row.Phone));
-
-      // If fee plan name given, find its ID
-      var planId = row.Fee_Plan_ID;
-      if (!planId && row.Fee_Plan_Name) {
-        var plan = readAll_('Fee_Plans').find(function (p) { return p.Plan_Name === row.Fee_Plan_Name && p.Status !== 'Deleted'; });
-        if (!plan) throw new Error('Fee plan not found: ' + row.Fee_Plan_Name);
-        planId = plan.Plan_ID;
-      }
-
-      // Check if student already has a fee record — skip if so (avoid duplicates)
-      var existing = findOne_('Student_Fees', 'Student_ID', student.Student_ID);
-      if (!existing && planId) {
-        assignFeePlan_(student.Student_ID, planId, {
-          discount:    Number(row.Discount || 0),
-          scholarship: Number(row.Scholarship || 0),
-          start_date:  row.Start_Date || new Date().toISOString().split('T')[0],
-        }, actor);
-      }
-
-      // Record any payment included in the row
-      if (row.Amount_Paid && Number(row.Amount_Paid) > 0) {
-        recordPayment_({
-          Student_ID:     student.Student_ID,
-          Amount:         Number(row.Amount_Paid),
-          Payment_Mode:   row.Payment_Mode || 'Cash',
-          Transaction_ID: row.Transaction_ID || '',
-          Remarks:        'Bulk import — row ' + (idx + 1),
-        }, actor);
-      }
-
-      results.success += 1;
-    } catch (e) {
-      results.failed += 1;
-      results.errors.push('Row ' + (idx + 1) + ': ' + e.message);
-    }
-  });
-
-  logAudit_(actor.sub, actor.role, 'BULK_IMPORT_FEES', 'Student_Fees', Utilities.getUuid(), null, { success: results.success, failed: results.failed });
-  return results;
-}
-
-/**
- * bulkImportPayments_ — import a list of payment records only (no plan assignment).
- * Useful for migrating historical payment data.
- */
-function bulkImportPayments_(rows, actor) {
-  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.CENTRE_MANAGER]);
-  if (!Array.isArray(rows) || rows.length === 0) throw new Error('No rows provided');
-
-  var results = { success: 0, failed: 0, errors: [] };
-  rows.forEach(function (row, idx) {
-    try {
-      if (!row.Student_ID) throw new Error('Student_ID required');
-      if (!row.Amount || Number(row.Amount) <= 0) throw new Error('Invalid amount');
-      recordPayment_({
-        Student_ID:     row.Student_ID,
-        Amount:         Number(row.Amount),
-        Payment_Mode:   row.Payment_Mode || 'Cash',
-        Transaction_ID: row.Transaction_ID || '',
-        Payment_Date:   row.Payment_Date || '',
-        Remarks:        row.Remarks || 'Bulk import',
-        Collected_By:   actor.sub,
-      }, actor);
-      results.success += 1;
-    } catch (e) {
-      results.failed += 1;
-      results.errors.push('Row ' + (idx + 1) + ': ' + e.message);
-    }
-  });
-  return results;
-}
-
-// ================================================================
-// SECTION 14 — FEE CALENDAR (WEEK + DAY VIEWS)
-// ================================================================
-
-/** Returns all dues for a specific date (day view) */
-function getFeeDayView_(date, filters, actor) {
-  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.REGIONAL_MANAGER, ROLES.CENTRE_MANAGER, ROLES.COUNSELLOR]);
-  var insts = readAll_('Fee_Installments').filter(function (r) {
-    return r.Status !== 'Paid' && r.Status !== 'Deleted' && String(r.Due_Date).slice(0, 10) === date;
-  });
-  if (filters && filters.centre) {
-    var stuMap = {}; readAll_('Student_Fees').forEach(function (f) { stuMap[f.Student_ID] = f; });
-    insts = insts.filter(function (r) { return (stuMap[r.Student_ID] || {}).Centre === filters.centre; });
-  }
-  return enrichInstallments_(insts);
-}
-
-/** Returns all dues for a 7-day window (week view) */
-function getFeeWeekView_(startDate, filters, actor) {
-  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.REGIONAL_MANAGER, ROLES.CENTRE_MANAGER, ROLES.COUNSELLOR]);
-  var start = new Date(startDate); start.setHours(0, 0, 0, 0);
-  var end   = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999);
-
-  var insts = readAll_('Fee_Installments').filter(function (r) {
-    if (r.Status === 'Paid' || r.Status === 'Deleted') return false;
-    var d = new Date(r.Due_Date); return d >= start && d <= end;
-  });
-
-  if (filters && filters.centre) {
-    var stuMap = {}; readAll_('Student_Fees').forEach(function (f) { stuMap[f.Student_ID] = f; });
-    insts = insts.filter(function (r) { return (stuMap[r.Student_ID] || {}).Centre === filters.centre; });
-  }
-
-  // Group by date
-  var byDate = {};
-  enrichInstallments_(insts).forEach(function (inst) {
-    var d = String(inst.Due_Date).slice(0, 10);
-    if (!byDate[d]) byDate[d] = [];
-    byDate[d].push(inst);
-  });
-  return byDate;
-}
-
-function enrichInstallments_(insts) {
-  var stuFeeMap = {}; readAll_('Student_Fees').forEach(function (f) { stuFeeMap[f.Student_ID] = f; });
-  var stuMap    = {}; readAll_('Students').forEach(function (s) { stuMap[s.Student_ID] = s; });
-  var today = new Date(); today.setHours(0, 0, 0, 0);
-
-  return insts.map(function (inst) {
-    var fee = stuFeeMap[inst.Student_ID] || {};
-    var stu = stuMap[inst.Student_ID] || {};
-    var due = new Date(inst.Due_Date); due.setHours(0, 0, 0, 0);
-    var diff = Math.round((due - today) / 86400000);
-    var colour = inst.Status === 'Paid' ? 'green' : diff === 0 ? 'yellow' : diff > 0 && diff <= 7 ? 'orange' : diff < 0 ? 'red' : 'blue';
-    return Object.assign({}, inst, {
-      student_name:  stu.Full_Name || fee.Student_Name || inst.Student_ID,
-      phone:         stu.Phone || '',
-      centre:        fee.Centre || '',
-      course:        fee.Course || '',
-      batch:         fee.Batch || '',
-      counsellor:    fee.Counsellor || '',
-      days_overdue:  diff < 0 ? Math.abs(diff) : 0,
-      days_until_due:diff > 0 ? diff : 0,
-      colour:        colour,
-    });
-  });
-}
-
-// ================================================================
-// SECTION 15 — CRM FOLLOW-UP LOG VIEW
-// ================================================================
-
-function getCrmFollowUpLog_(studentId, actor) {
-  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.CENTRE_MANAGER, ROLES.COUNSELLOR]);
-  var logs = readAll_('CRM_FollowUp_Log').filter(function (r) { return r.Student_ID === studentId; });
-  // Also get audit log entries for this student's fee actions
-  var auditEntries = [];
-  try {
-    auditEntries = readAll_('Audit_Log').filter(function (r) {
-      return r.Table_Name === 'Student_Fees' && r.Record_ID === studentId && r.Action !== 'READ';
-    });
-  } catch (e) {}
-  return {
-    followup_log: logs,
-    audit_trail:  auditEntries.slice(-20),
-    student:      findOne_('Students', 'Student_ID', studentId) || {},
-    fee:          findOne_('Student_Fees', 'Student_ID', studentId) || {},
-  };
-}
-
-function addFollowUpNote_(studentId, note, nextFollowup, channel, actor) {
-  requireRole_(actor, [ROLES.SUPER_ADMIN, ROLES.CENTRE_MANAGER, ROLES.COUNSELLOR]);
-  return withLock_(function () {
-    appendRow_('CRM_FollowUp_Log', {
-      Student_ID:         studentId,
-      Current_Stage:      note.stage || 'Contacted',
-      Last_Contacted:     new Date().toISOString().split('T')[0],
-      Next_Followup_Date: nextFollowup || '',
-      Last_Note:          note.text || '',
-      Channel:            channel || 'Manual',
-      Updated_By:         actor.sub,
-      Updated_At:         new Date().toISOString(),
-    });
-    return true;
-  });
 }
