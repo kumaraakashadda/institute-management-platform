@@ -143,3 +143,54 @@ function logSystem_(level, message, source) {
     // Last resort — nothing else to fall back on.
   }
 }
+
+/**
+ * Admin-facing audit trail viewer. Every create/update/delete across
+ * every module in this codebase calls logAudit_(), so this is a
+ * complete record of who changed what, when, and the before/after
+ * values — filterable and paginated for the Settings > Audit Log screen.
+ *
+ * filters: { table, user_id, action, date_from, date_to, record_id }
+ * filters.limit / filters.offset for pagination (default 50 / 0).
+ */
+function getAuditLog_(filters, actor) {
+  requireRole_(actor, [ROLES.SUPER_ADMIN]);
+  filters = filters || {};
+
+  var rows = readAll_('Audit_Log');
+  if (filters.table)     rows = rows.filter(function(r){ return r.Table_Name === filters.table; });
+  if (filters.user_id)   rows = rows.filter(function(r){ return String(r.User_ID) === String(filters.user_id); });
+  if (filters.action)    rows = rows.filter(function(r){ return r.Action === filters.action; });
+  if (filters.record_id) rows = rows.filter(function(r){ return String(r.Record_ID) === String(filters.record_id); });
+  if (filters.date_from) rows = rows.filter(function(r){ return new Date(r.Timestamp) >= new Date(filters.date_from); });
+  if (filters.date_to)   rows = rows.filter(function(r){ return new Date(r.Timestamp) <= new Date(filters.date_to); });
+
+  rows.sort(function(a,b){ return new Date(b.Timestamp) - new Date(a.Timestamp); });
+
+  var limit  = Number(filters.limit  || 50);
+  var offset = Number(filters.offset || 0);
+
+  return {
+    total:  rows.length,
+    limit:  limit,
+    offset: offset,
+    entries: rows.slice(offset, offset + limit).map(function(r){
+      return {
+        audit_id:   r.Audit_ID,
+        user_id:    r.User_ID,
+        role:       r.Role,
+        action:     r.Action,
+        table:      r.Table_Name,
+        record_id:  r.Record_ID,
+        old_value:  r.Old_Value ? safeParse_(r.Old_Value) : null,
+        new_value:  r.New_Value ? safeParse_(r.New_Value) : null,
+        timestamp:  r.Timestamp,
+        ip:         r.IP
+      };
+    })
+  };
+}
+
+function safeParse_(str) {
+  try { return JSON.parse(str); } catch(e) { return str; }
+}
