@@ -6,7 +6,7 @@ import { DashboardShell } from '@/components/dashboard/DashboardShell'
 import { Card, CardHeader, CardBody, Button, Input, Select, Alert } from '@/components/ui'
 import { useCreateSession } from '@/lib/attendance/useAttendance'
 import { useQuery } from '@tanstack/react-query'
-import { gasGet } from '@/lib/gasClient'
+import { gasGet, IS_DEMO } from '@/lib/gasClient'
 
 interface MasterItem { [k: string]: string }
 interface FeatureFlag { Flag_Key: string; Enabled: string | boolean }
@@ -47,6 +47,11 @@ export default function NewSessionPage() {
     e.preventDefault()
     if (gpsRequired && !gps) { captureGps(); return }
     try {
+      if (IS_DEMO) {
+        // In demo mode — redirect straight to the demo session live page
+        router.push('/dashboard/attendance/session/SES000001')
+        return
+      }
       const session = await createSession({
         ...form,
         Duration_Minutes: Number(form.Duration_Minutes),
