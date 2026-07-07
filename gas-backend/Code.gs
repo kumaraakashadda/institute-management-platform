@@ -98,12 +98,22 @@ function handleRequest_(action, data, token) {
       // ── Installments ──────────────────────────────────────────────────────
       case 'listInstallments':
         return ok_(listInstallments_(data.student_id, actor));
+      case 'createInstallment':
+        return ok_(createInstallment_(data.student_id, data.fields, actor));
+      case 'updateInstallment':
+        return ok_(updateInstallment_(data.installment_id, data.patch, actor));
+      case 'deleteInstallment':
+        return ok_(deleteInstallment_(data.installment_id, actor));
       case 'rescheduleInstallment':
         return ok_(rescheduleInstallment_(data.installment_id, data.new_due_date, data.reason, actor));
       case 'mergeInstallments':
         return ok_(mergeInstallments_(data.ids, actor));
       case 'splitInstallment':
         return ok_(splitInstallment_(data.installment_id, data.amounts, data.dates, actor));
+
+      // ── Audit Log ─────────────────────────────────────────────────────────
+      case 'getAuditLog':
+        return ok_(getAuditLog_(data.filters, actor));
 
       // ── Payments ──────────────────────────────────────────────────────────
       case 'recordPayment':
@@ -189,36 +199,6 @@ function handleRequest_(action, data, token) {
         return ok_(getStudentLedger_(data.student_id, actor));
       case 'assignFeePlanToStudent':
         return ok_(assignFeePlanToStudent_(data.student_id, data.plan_id, data.overrides, actor));
-
-      // ── Bulk Upload ──────────────────────────────────────────────────────────
-      case 'bulkImportStudentFees':
-        return ok_(bulkImportStudentFees_(data.rows, actor));
-      case 'bulkImportPayments':
-        return ok_(bulkImportPayments_(data.rows, actor));
-
-      // ── Fee Calendar Extended ─────────────────────────────────────────────
-      case 'getFeeDayView':
-        return ok_(getFeeDayView_(data.date, data.filters, actor));
-      case 'getFeeWeekView':
-        return ok_(getFeeWeekView_(data.start_date, data.filters, actor));
-
-      // ── CRM Follow-up Log ─────────────────────────────────────────────────
-      case 'getCrmFollowUpLog':
-        return ok_(getCrmFollowUpLog_(data.student_id, actor));
-      case 'addFollowUpNote':
-        return ok_(addFollowUpNote_(data.student_id, data.note, data.next_followup, data.channel, actor));
-
-      // ── Attendance Certificate ────────────────────────────────────────────
-      case 'generateAttendanceCertificate':
-        return ok_(generateAttendanceCertificate_(data.student_id, data.filters, actor));
-
-      // ── Duplicate Detection ───────────────────────────────────────────────
-      case 'checkAdmissionDuplicate':
-        return ok_(checkAdmissionDuplicate_(data.phone, data.email, actor));
-
-      // ── Global Filtered Stats ─────────────────────────────────────────────
-      case 'getFilteredAttendanceStats':
-        return ok_(getFilteredAttendanceStats_(data.filters, actor));
 
       // ── Notifications ────────────────────────────────────────────────────────
       case 'sendAnnouncement':
