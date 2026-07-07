@@ -37,6 +37,30 @@ function setupDatabase() {
   return created;
 }
 
+/**
+ * Run this ONCE after upgrading an already-live deployment to pick up new
+ * columns (e.g. GPS fields) added to SCHEMA later. It only ever WIDENS a
+ * sheet's header row — it never deletes a column or touches existing data
+ * rows, so it is always safe to re-run.
+ */
+function migrateSchema_() {
+  var ss = getSpreadsheet_();
+  var touched = [];
+  Object.keys(SCHEMA).forEach(function (name) {
+    var sh = ss.getSheetByName(name);
+    if (!sh) return; // brand-new table — setupDatabase() will create it
+    var heads = SCHEMA[name];
+    var currentWidth = Math.max(sh.getLastColumn(), 1);
+    if (heads.length > currentWidth) {
+      sh.getRange(1, 1, 1, heads.length).setValues([heads]);
+      sh.getRange(1, 1, 1, heads.length).setFontWeight('bold');
+      touched.push(name);
+    }
+  });
+  Logger.log('Schema migration complete. Updated sheets: ' + (touched.length ? touched.join(', ') : '(none — already up to date)'));
+  return touched;
+}
+
 function seedDefaultSettings_() {
   var defaults = {
     ATTENDANCE_THRESHOLD_PERCENT: '75',
@@ -45,33 +69,7 @@ function seedDefaultSettings_() {
     STUDENT_ID_PREFIX: 'STU',
     ADMISSION_ID_PREFIX: 'ADM',
     LATE_FEE_GRACE_DAYS: '3',
-    DUE_REMINDER_DAYS_BEFORE: '3',
-    INSTITUTE_NAME: 'My Institute',
-    INSTITUTE_EMAIL: 'info@myinstitute.com',
-    INSTITUTE_PHONE: '',
-    INSTITUTE_ADDRESS: '',
-    INSTITUTE_LOGO_URL: '',
-    BRAND_COLOUR: '#2563eb',
-    WORKING_DAYS: 'Mon,Tue,Wed,Thu,Fri,Sat',
-    MAX_DAILY_SESSIONS: '3',
-    ALLOW_MULTIPLE_SESSIONS: 'TRUE',
-    ATTENDANCE_LATE_THRESHOLD_MINUTES: '10',
-    ENABLE_GPS_VALIDATION: 'FALSE',
-    ENABLE_DEVICE_FINGERPRINT: 'FALSE',
-    ENABLE_SELFIE_CAPTURE: 'FALSE',
-    ENABLE_WIFI_VALIDATION: 'FALSE',
-    DUPLICATE_CHECK_ON_ADMISSION: 'TRUE',
-    AUTO_SEND_WELCOME_EMAIL: 'TRUE',
-    FEE_RECEIPT_TEMPLATE: 'DEFAULT',
-    RECEIPT_PREFIX: 'RCP',
-    LATE_FEE_PERCENT: '0',
-    BULK_UPLOAD_MAX_ROWS: '500',
-    CERTIFICATE_HEADER_TEXT: 'This is to certify that',
-    NOTIFICATION_EMAIL_FROM: '',
-    WHATSAPP_API_URL: '',
-    WHATSAPP_API_KEY: '',
-    SMS_API_URL: '',
-    SMS_API_KEY: ''
+    DUE_REMINDER_DAYS_BEFORE: '3'
   };
   var existing = readAll_('Settings').map(function (r) { return r.Setting_Key; });
   Object.keys(defaults).forEach(function (key) {
@@ -88,7 +86,7 @@ function seedDefaultSettings_() {
 }
 
 function seedDefaultFeatureFlags_() {
-  var defaults = ['ATTENDANCE_MODULE', 'FEE_MODULE', 'PARENT_PORTAL', 'NOTIFICATIONS_EMAIL', 'NOTIFICATIONS_WHATSAPP'];
+  var defaults = ['ATTENDANCE_MODULE', 'FEE_MODULE', 'PARENT_PORTAL', 'NOTIFICATIONS_EMAIL', 'NOTIFICATIONS_WHATSAPP', 'ENABLE_GPS_VALIDATION'];
   var existing = readAll_('Feature_Flags').map(function (r) { return r.Flag_Key; });
   defaults.forEach(function (key) {
     if (existing.indexOf(key) === -1) {
