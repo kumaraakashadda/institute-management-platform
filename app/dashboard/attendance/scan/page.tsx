@@ -1,11 +1,14 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { DashboardShell } from '@/components/dashboard/DashboardShell'
 import { Card, CardBody, Alert, Button } from '@/components/ui'
 import { useRecordAttendance } from '@/lib/attendance/useAttendance'
-import { IS_DEMO } from '@/lib/gasClient'
+import { IS_DEMO, gasGet } from '@/lib/gasClient'
 import type { ScanResult } from '@/lib/attendance/types'
+
+interface FeatureFlag { Flag_Key: string; Enabled: string | boolean }
 
 function getDeviceInfo() {
   if (typeof window === 'undefined') return {}
@@ -27,19 +30,32 @@ export default function ScanQrPage() {
   const [manualInput, setManualInput] = useState('')
   const [tab, setTab]         = useState<'camera' | 'manual'>('camera')
   const [gps, setGps]         = useState<{ lat: number; lng: number } | null>(null)
+  const [gpsStatus, setGpsStatus] = useState<'idle' | 'locating' | 'ok' | 'denied'>('idle')
   const scannerRef            = useRef<{ stop: () => void } | null>(null)
   const divRef                = useRef<HTMLDivElement>(null)
 
   const { mutateAsync: record } = useRecordAttendance()
+  const { data: flags } = useQuery({ queryKey: ['feature-flags'], queryFn: () => gasGet<FeatureFlag[]>('listFeatureFlags', {}), staleTime: 60_000, retry: false, enabled: !IS_DEMO })
+  const gpsRequired = !IS_DEMO && (flags?.some(f => f.Flag_Key === 'ENABLE_GPS_VALIDATION' && (f.Enabled === true || String(f.Enabled).toUpperCase() === 'TRUE')) ?? false)
 
-  // Collect GPS (optional)
+  function captureGps() {
+    if (!navigator.geolocation) { setGpsStatus('denied'); return }
+    setGpsStatus('locating')
+    navigator.geolocation.getCurrentPosition(
+      pos => { setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setGpsStatus('ok') },
+      () => setGpsStatus('denied'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    )
+  }
+
+  // Collect GPS — mandatory when ENABLE_GPS_VALIDATION is on, optional otherwise
   useEffect(() => {
     if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        pos => setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => {} // GPS optional — don't block
-      )
+      captureGps()
+    } else {
+      setGpsStatus('denied')
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,6 +86,10 @@ export default function ScanQrPage() {
   async function handleScan(raw: string) {
     setState('scanning')
     try {
+      if (gpsRequired && !gps) {
+        throw new Error('This centre requires location access to mark attendance. Please allow location and try again.')
+      }
+
       let scanData: { session_id: string; token: string }
       try { scanData = JSON.parse(raw) }
       catch { throw new Error('Invalid QR code. Make sure you are scanning the attendance QR.') }
@@ -116,6 +136,23 @@ export default function ScanQrPage() {
         </div>
 
         {IS_DEMO && <Alert variant="info">Demo mode. Real QR scanning requires a backend connection.</Alert>}
+
+        {gpsRequired && (
+          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${
+            gpsStatus === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-300'
+            : gpsStatus === 'denied' ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300'
+            : 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-300'
+          }`}>
+            <span>{gpsStatus === 'ok' ? '📍✓' : gpsStatus === 'locating' ? '📍…' : '📍!'}</span>
+            <span className="flex-1">
+              {gpsStatus === 'ok' ? 'Location verified' : gpsStatus === 'locating' ? 'Getting your location…'
+                : gpsStatus === 'denied' ? 'Location required — enable it in your browser settings' : 'Location required for attendance'}
+            </span>
+            {gpsStatus !== 'ok' && gpsStatus !== 'locating' && (
+              <button onClick={captureGps} className="underline">Retry</button>
+            )}
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
