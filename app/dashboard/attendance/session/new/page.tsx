@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { gasGet } from '@/lib/gasClient'
 
 interface MasterItem { [k: string]: string }
+interface FeatureFlag { Flag_Key: string; Enabled: string | boolean }
 
 export default function NewSessionPage() {
   const router = useRouter()
@@ -18,20 +19,41 @@ export default function NewSessionPage() {
   const { data: batches } = useQuery({ queryKey: ['batches'], queryFn: () => gasGet<MasterItem[]>('listMasterData', { table: 'Batches' }), staleTime: 10 * 60_000 })
   const { data: courses } = useQuery({ queryKey: ['courses'], queryFn: () => gasGet<MasterItem[]>('listMasterData', { table: 'Courses' }), staleTime: 10 * 60_000 })
   const { data: subjects } = useQuery({ queryKey: ['subjects'], queryFn: () => gasGet<MasterItem[]>('listMasterData', { table: 'Subjects' }), staleTime: 10 * 60_000 })
+  const { data: flags } = useQuery({ queryKey: ['feature-flags'], queryFn: () => gasGet<FeatureFlag[]>('listFeatureFlags', {}), staleTime: 60_000, retry: false })
+  const gpsRequired = flags?.some(f => f.Flag_Key === 'ENABLE_GPS_VALIDATION' && (f.Enabled === true || String(f.Enabled).toUpperCase() === 'TRUE')) ?? false
 
   const [form, setForm] = useState({
     Centre: '', Batch: '', Course: '', Subject: '',
     Classroom: '', Duration_Minutes: 60, Grace_Minutes: 5,
     Start_Time: new Date().toISOString().slice(0, 16),
   })
+  const [gps, setGps] = useState<{ lat: number; lng: number } | null>(null)
+  const [gpsStatus, setGpsStatus] = useState<'idle' | 'locating' | 'ok' | 'denied'>('idle')
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
 
+  function captureGps() {
+    if (!navigator.geolocation) { setGpsStatus('denied'); return }
+    setGpsStatus('locating')
+    navigator.geolocation.getCurrentPosition(
+      pos => { setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setGpsStatus('ok') },
+      () => setGpsStatus('denied'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    )
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (gpsRequired && !gps) { captureGps(); return }
     try {
-      const session = await createSession({ ...form, Duration_Minutes: Number(form.Duration_Minutes), Grace_Minutes: Number(form.Grace_Minutes) })
+      const session = await createSession({
+        ...form,
+        Duration_Minutes: Number(form.Duration_Minutes),
+        Grace_Minutes: Number(form.Grace_Minutes),
+        Teacher_GPS_Lat: gps ? String(gps.lat) : '',
+        Teacher_GPS_Lng: gps ? String(gps.lng) : '',
+      })
       router.push(`/dashboard/attendance/session/${session.Session_ID}`)
     } catch { /* error shown below */ }
   }
@@ -93,6 +115,23 @@ export default function NewSessionPage() {
                   </select>
                 </div>
               </div>
+
+              {gpsRequired && (
+                <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-amber-700 dark:text-amber-300">📍 GPS location required</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                      {gpsStatus === 'ok' && gps ? `Captured (${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)})`
+                        : gpsStatus === 'locating' ? 'Getting your location…'
+                        : gpsStatus === 'denied' ? 'Location access denied — enable it in your browser settings.'
+                        : 'This centre requires your location to start a session.'}
+                    </p>
+                  </div>
+                  <Button type="button" size="sm" variant="secondary" onClick={captureGps} disabled={gpsStatus === 'locating'}>
+                    {gpsStatus === 'ok' ? '↺ Recapture' : '📍 Get Location'}
+                  </Button>
+                </div>
+              )}
 
               {/* Rules reminder */}
               <div className="rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 p-4 space-y-2">
