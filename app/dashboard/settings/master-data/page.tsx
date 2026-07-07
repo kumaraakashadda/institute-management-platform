@@ -8,7 +8,7 @@ import { gasGet, gasPost, IS_DEMO } from '@/lib/gasClient'
 type TableName = 'Centres'|'Courses'|'Batches'|'Subjects'|'Target_Years'|'Segments'
 
 const TABLE_CONFIG: Record<TableName,{label:string;icon:string;fields:{key:string;label:string;required?:boolean}[]}> = {
-  Centres:     {label:'Centres',     icon:'🏫', fields:[{key:'Centre_Name',label:'Centre Name',required:true},{key:'City',label:'City'},{key:'Address',label:'Address'},{key:'Phone',label:'Phone'},{key:'Manager',label:'Manager'}]},
+  Centres:     {label:'Centres',     icon:'🏫', fields:[{key:'Centre_Name',label:'Centre Name',required:true},{key:'City',label:'City'},{key:'Address',label:'Address'},{key:'Phone',label:'Phone'},{key:'Manager',label:'Manager'},{key:'Latitude',label:'Latitude (for GPS attendance)'},{key:'Longitude',label:'Longitude (for GPS attendance)'}]},
   Courses:     {label:'Courses',     icon:'📚', fields:[{key:'Course_Name',label:'Course Name',required:true},{key:'Description',label:'Description'},{key:'Duration_Months',label:'Duration (months)'}]},
   Batches:     {label:'Batches',     icon:'👥', fields:[{key:'Batch_Name',label:'Batch Name',required:true},{key:'Centre',label:'Centre'},{key:'Course',label:'Course'},{key:'Capacity',label:'Capacity'},{key:'Start_Date',label:'Start Date'}]},
   Subjects:    {label:'Subjects',    icon:'📖', fields:[{key:'Subject_Name',label:'Subject Name',required:true},{key:'Course',label:'Course'},{key:'Code',label:'Code'}]},
