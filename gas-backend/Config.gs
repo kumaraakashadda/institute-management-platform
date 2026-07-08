@@ -46,7 +46,7 @@ var SCHEMA = {
   Teachers:            ['Teacher_ID','Full_Name','Phone','Email','Centre','Subjects','Password_Hash','Salt','Status','Created_At'],
   Counsellors:         ['Counsellor_ID','Full_Name','Phone','Email','Centre','Password_Hash','Salt','Status','Created_At'],
   Parents:             ['Parent_ID','Full_Name','Phone','Email','Student_IDs','Password_Hash','Salt','Status','Created_At'],
-  Students:            ['Student_ID','Admission_ID','Full_Name','DOB','Gender','Phone','Email','Centre','Course','Batch','Target_Year','Segment','Parent_ID','Portal_Username','Password_Hash','Salt','Must_Reset_Password','QR_Identity','Photo_URL','Status','Created_At','Updated_At'],
+  Students:            ['Student_ID','Admission_ID','Full_Name','DOB','Gender','Phone','Email','Centre','Course','Batch','Target_Year','Segment','Parent_ID','Portal_Username','Password_Hash','Salt','Must_Reset_Password','QR_Identity','Photo_URL','School_Name','Tuition_Centre','Class10_Percentage','Class12_Percentage','Status','Created_At','Updated_At'],
   Admission_Master:    ['Admission_ID','Full_Name','DOB','Gender','Phone','Email','Parent_Name','Parent_Phone','Parent_Email','Address','Centre','Course','Batch','Target_Year','Segment','Admission_Date','Counsellor','Registration_Fee_Paid','Status','Created_At','Created_By'],
 
   // ── Master / Reference Data ─────────────────────────────────────────────
@@ -91,6 +91,9 @@ var SCHEMA = {
   HR_Employees:        ['Employee_ID','Full_Name','Role','Department','Phone','Email','Join_Date','Status'],
   Library_Books:       ['Book_ID','Title','Author','ISBN','Category','Copies','Available','Status'],
   Library_Issues:      ['Issue_ID','Book_ID','Student_ID','Issue_Date','Return_Date','Status'],
+
+  // ── Student Form Vault ────────────────────────────────────────────────────
+  Form_Vault:          ['Form_ID','Student_ID','Form_Name','Board_or_Body','Exam_Year','User_ID','Password_Hint','Application_Number','Admit_Card_URL','Result_URL','Status','Remarks','Created_At','Updated_At'],
 };
 var MASTER_DATA_TABLES    = ['Centres','Courses','Batches','Subjects','Target_Years','Segments'];
 var MASTER_DATA_WRITE_ROLES = [ROLES.SUPER_ADMIN];

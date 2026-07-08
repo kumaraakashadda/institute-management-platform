@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '@/store/authStore'
+import { useSettingsStore } from '@/lib/settingsStore'
 
 interface NavItem { href: string; label: string; icon: string; badge?: string }
 interface NavSection { title: string; items: NavItem[] }
@@ -28,9 +29,10 @@ const NAV: Record<string, NavSection[]> = {
       { href: '/dashboard/fees/reports', label: 'Fee Reports', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
     ]},
     { title: 'Configuration', items: [
-      { href: '/dashboard/admin/bulk-upload', label: 'Bulk Upload', icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12' },
-      { href: '/dashboard/settings', label: 'Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
-      { href: '/dashboard/settings/master-data', label: 'Master Data', icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4' },
+      { href: '/dashboard/admin/bulk-upload',  label: 'Bulk Upload',       icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12' },
+      { href: '/dashboard/custom-dashboard',   label: 'Custom Dashboard',  icon: 'M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm6 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zm-6 6a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm6 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z' },
+      { href: '/dashboard/settings',           label: 'Settings',          icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
+      { href: '/dashboard/settings/master-data', label: 'Master Data',     icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4' },
     ]},
   ],
   CENTRE_MANAGER: [
@@ -89,7 +91,9 @@ const NAV: Record<string, NavSection[]> = {
       { href: '/dashboard/fees/student', label: 'My Fees', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
     ]},
     { title: 'More', items: [
-      { href: '/dashboard/student/notifications', label: 'Notifications', icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' },
+      { href: '/dashboard/student/profile',      label: '🗃 Form Vault',      icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8M10 12v4m4-4v4' },
+      { href: '/dashboard/student/notifications', label: 'Notifications',     icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' },
+      { href: '/dashboard/custom-dashboard',      label: 'My Dashboard',      icon: 'M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm6 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zm-6 6a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm6 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z' },
     ]},
   ],
   PARENT: [
@@ -152,10 +156,16 @@ export function DashboardShell({ children, title }: { children: React.ReactNode;
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [notifOpen, setNotifOpen]     = useState(false)
   const { role, name, logout } = useAuthStore()
+  const settings = useSettingsStore()
   const pathname = usePathname()
   const router   = useRouter()
   const sections = NAV[role || ''] || []
-  const roleColor = ROLE_COLORS[role || ''] || '#2563EB'
+
+  // Live brand from settings store — updates instantly when admin changes them
+  const brandColour  = settings.get('BRAND_COLOUR', '#2563EB')
+  const instituteName = settings.get('INSTITUTE_NAME', 'IMP')
+
+  const roleColor = ROLE_COLORS[role || ''] || brandColour
   const initials  = (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 
   useEffect(() => { setSidebarOpen(false) }, [pathname])
@@ -241,7 +251,7 @@ export function DashboardShell({ children, title }: { children: React.ReactNode;
             <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-black shrink-0"
               style={{ background: 'linear-gradient(135deg, #2563eb, #4f46e5)' }}>I</div>
             <div>
-              <p className="text-sm font-black text-gray-900 dark:text-white tracking-tight leading-none">IMP</p>
+              <p className="text-sm font-black text-gray-900 dark:text-white tracking-tight leading-none">{instituteName.slice(0,10)}</p>
               <p className="text-[9px] text-blue-600 dark:text-blue-400 font-bold tracking-[0.15em] uppercase leading-none mt-0.5">Platform</p>
             </div>
           </div>

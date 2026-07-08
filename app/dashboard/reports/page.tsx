@@ -44,28 +44,69 @@ export default function ReportsPage() {
   const [centre, setCentre] = useState('')
   const [month, setMonth]   = useState('')
   const [year, setYear]     = useState('2025')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo]   = useState('')
+  const [batch, setBatch]     = useState('')
+  const [course, setCourse]   = useState('')
+  const [teacher, setTeacher] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [showFilterPanel, setShowFilterPanel] = useState(false)
 
-  async function exportReport(format: 'csv'|'pdf') {
+  const DEMO_BATCHES  = ['JEE-2026-A','JEE-2026-B','NEET-2026-A','NEET-2026-B','FND-2025-A']
+  const DEMO_COURSES  = ['JEE Advanced','JEE Mains','NEET','Foundation','CUET']
+  const DEMO_TEACHERS = ['Dr. Meera Sharma','Prof. Rakesh Singh','Ms. Anita Roy','Mr. Vijay Kumar']
+
+  // Build CSV content per active report type
+  function buildCSV(): [string[][], string] {
+    if (active === 'defaulters') {
+      const rows = [['Name','Student ID','Phone','Centre','Batch','Attendance %','Absent Days','Last Present'],
+        ...DEMO_DEFAULTERS.map(d => [d.name,d.id,d.phone,d.centre,d.batch,d.att+'%',String(d.absent),d.last_present])]
+      return [rows, `IMP_Defaulters_${year}${month?'_'+month:''}.csv`]
+    }
+    if (active === 'fee') {
+      const rows = [['Month','Collected (₹)','Pending (₹)','Collection %'],
+        ...DEMO_FEE.map(r => [r.month, String(r.collected), String(r.pending), Math.round(r.collected/(r.collected+r.pending)*100)+'%'])]
+      return [rows, `IMP_FeeCollection_${year}.csv`]
+    }
+    if (active === 'attendance') {
+      const rows = [['Date','Present','Absent','Percentage'],
+        ...DEMO_TREND.slice(-10).map(r => [r.date, String(r.present), String(r.absent), r.pct+'%'])]
+      return [rows, `IMP_Attendance_${year}.csv`]
+    }
+    if (active === 'centre') {
+      const rows = [['Centre','Students','Attendance %','Fee Collected','Fee Pending'],
+        ...DEMO_CENTRES.map(c => [c.centre, String(c.students), c.pct+'%', String(c.students*87000), String(c.students*13000)])]
+      return [rows, `IMP_CentreComparison_${year}.csv`]
+    }
+    if (active === 'teacher') {
+      const rows = [['Teacher','Centre','Subjects','Sessions','Avg Attendance %'],
+        ['Dr. Meera Sharma','Delhi Rohini','Physics,Chem','42','87%'],
+        ['Prof. Rakesh Singh','Delhi Rohini','Maths','38','91%']]
+      return [rows, `IMP_TeacherReport_${year}.csv`]
+    }
+    const rows = [['Month','Admissions'],
+      ...DEMO_ADMIT.map(a => [a.month, String(a.count)])]
+    return [rows, `IMP_Admissions_${year}.csv`]
+  }
+
+  async function exportReport(format: 'csv'|'pdf'|'excel') {
     setExporting(true)
-    await new Promise(r => setTimeout(r, 800))
-    if (format === 'csv') {
-      // Generate demo CSV
-      const rows = active === 'defaulters'
-        ? [['Name','ID','Phone','Centre','Batch','Attendance%','Absent Days'],
-           ...DEMO_DEFAULTERS.map(d => [d.name,d.id,d.phone,d.centre,d.batch,d.att+'%',d.absent])]
-        : [['Month','Collected','Pending'],
-           ...DEMO_FEE.map(r => [r.month, r.collected, r.pending])]
-      const csv = rows.map(r => r.join(',')).join('\n')
+    await new Promise(r => setTimeout(r, 600))
+    if (format === 'csv' || format === 'excel') {
+      const [rows, filename] = buildCSV()
+      const csv = rows.map(r => r.map(v => v.includes(',') ? `"${v}"` : v).join(',')).join('\n')
       const a = document.createElement('a')
       a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}))
-      a.download = `IMP_${active}_report_${year}.csv`
+      a.download = filename
       a.click()
     } else {
       window.print()
     }
     setExporting(false)
   }
+
+  // Active filter count for badge
+  const activeFilters = [month, dateFrom, dateTo, batch, course, teacher, centre].filter(Boolean).length
 
   return (
     <DashboardShell title="Reports">
@@ -76,12 +117,15 @@ export default function ReportsPage() {
             <h1 className="text-2xl font-black text-gray-900 dark:text-white">📊 Reports</h1>
             <p className="text-sm text-gray-500 mt-0.5">Analytics and exports for all modules</p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => exportReport('csv')} disabled={exporting}>
-              {exporting ? '⏳' : '📥'} Export CSV
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="secondary" size="sm" onClick={() => exportReport('csv')} disabled={exporting}>
+              {exporting ? '⏳' : '📥'} CSV
             </Button>
-            <Button variant="secondary" onClick={() => exportReport('pdf')} disabled={exporting}>
-              🖨 Export PDF
+            <Button variant="secondary" size="sm" onClick={() => exportReport('excel')} disabled={exporting}>
+              📊 Excel
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => exportReport('pdf')} disabled={exporting}>
+              🖨 PDF
             </Button>
           </div>
         </div>
@@ -102,7 +146,8 @@ export default function ReportsPage() {
         {/* Filters */}
         <Card>
           <CardBody>
-            <div className="flex flex-wrap gap-3">
+            {/* Always-visible quick filters */}
+            <div className="flex flex-wrap gap-3 items-center">
               <Select value={year} onChange={e => setYear(e.target.value)} className="w-28">
                 {YEARS.map(y => <option key={y}>{y}</option>)}
               </Select>
@@ -110,14 +155,78 @@ export default function ReportsPage() {
                 <option value="">All Months</option>
                 {MONTHS.map(m => <option key={m}>{m}</option>)}
               </Select>
-              <Select value={centre} onChange={e => setCentre(e.target.value)} className="w-48">
+              <Select value={centre} onChange={e => setCentre(e.target.value)} className="w-44">
                 <option value="">All Centres</option>
                 {DEMO_CENTRES.map(c => <option key={c.centre}>{c.centre}</option>)}
               </Select>
-              <div className="ml-auto flex items-center gap-2">
+              <button onClick={() => setShowFilterPanel(f => !f)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all ${showFilterPanel ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-blue-400'}`}>
+                🔧 More Filters
+                {activeFilters > 0 && <span className={`w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center ${showFilterPanel ? 'bg-white text-blue-600' : 'bg-blue-600 text-white'}`}>{activeFilters}</span>}
+              </button>
+              {activeFilters > 0 && (
+                <button onClick={() => { setMonth(''); setDateFrom(''); setDateTo(''); setBatch(''); setCourse(''); setTeacher('') }}
+                  className="text-xs text-red-500 hover:text-red-600 font-medium">
+                  ✕ Clear filters
+                </button>
+              )}
+              <div className="ml-auto">
                 <Badge variant={IS_DEMO?'warning':'success'}>{IS_DEMO?'Demo Data':'Live Data'}</Badge>
               </div>
             </div>
+
+            {/* Expanded filter panel */}
+            {showFilterPanel && (
+              <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Date From</label>
+                  <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2 text-xs outline-none border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Date To</label>
+                  <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2 text-xs outline-none border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Batch</label>
+                  <select value={batch} onChange={e => setBatch(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2 text-xs outline-none border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20">
+                    <option value="">All Batches</option>
+                    {DEMO_BATCHES.map(b => <option key={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Course</label>
+                  <select value={course} onChange={e => setCourse(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2 text-xs outline-none border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20">
+                    <option value="">All Courses</option>
+                    {DEMO_COURSES.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+                {(active === 'attendance' || active === 'teacher') && (
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Teacher</label>
+                    <select value={teacher} onChange={e => setTeacher(e.target.value)}
+                      className="w-full rounded-xl border px-3 py-2 text-xs outline-none border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20">
+                      <option value="">All Teachers</option>
+                      {DEMO_TEACHERS.map(t => <option key={t}>{t}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Active filter chips */}
+            {activeFilters > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {[['Month',month],['From',dateFrom],['To',dateTo],['Batch',batch],['Course',course],['Teacher',teacher],['Centre',centre]].filter(([,v])=>v).map(([l,v])=>(
+                  <span key={l} className="flex items-center gap-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                    {l}: {v}
+                  </span>
+                ))}
+              </div>
+            )}
           </CardBody>
         </Card>
 

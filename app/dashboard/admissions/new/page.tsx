@@ -19,6 +19,7 @@ export default function NewAdmissionPage() {
   const [form, setForm] = useState({
     // Step 0 — Student
     Full_Name: '', DOB: '', Gender: '', Phone: '', Email: '', Address: '',
+    School_Name: '', Tuition_Centre: '', Class10_Percentage: '', Class12_Percentage: '',
     // Step 1 — Parent
     Parent_Name: '', Parent_Phone: '', Parent_Email: '',
     // Step 2 — Academic
@@ -146,6 +147,16 @@ export default function NewAdmissionPage() {
                   <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Address</label>
                   <textarea value={form.Address} onChange={set('Address')} rows={2} placeholder="Full address"
                     className="w-full rounded-xl border px-3 py-2.5 text-sm outline-none border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 resize-none" />
+                </div>
+                {/* Optional academic background */}
+                <div className="pt-1">
+                  <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Academic Background <span className="font-normal normal-case text-gray-400">(optional)</span></p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Input label="School Name" value={form.School_Name} onChange={set('School_Name')} placeholder="Current/last school" />
+                    <Input label="Tuition Centre" value={form.Tuition_Centre} onChange={set('Tuition_Centre')} placeholder="Other coaching centre (if any)" />
+                    <Input label="Class 10 Percentage (%)" type="number" value={form.Class10_Percentage} onChange={set('Class10_Percentage')} placeholder="e.g. 88.5" min="0" max="100" step="0.1" />
+                    <Input label="Class 12 Percentage (%)" type="number" value={form.Class12_Percentage} onChange={set('Class12_Percentage')} placeholder="e.g. 72.3 (if appeared)" min="0" max="100" step="0.1" />
+                  </div>
                 </div>
               </div>
             )}

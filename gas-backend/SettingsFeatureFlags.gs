@@ -14,7 +14,17 @@ function updateSetting_(key, value, actor) {
   requireRole_(actor, SETTINGS_WRITE_ROLES);
   return withLock_(function () {
     var row = findOne_('Settings', 'Setting_Key', key);
-    if (!row) throw new Error('Unknown setting: ' + key);
+    if (!row) {
+      // Auto-create the setting if it doesn't exist yet (upsert behaviour)
+      var newRow = {
+        Setting_Key: key, Setting_Value: value,
+        Description: 'Created via Settings page.',
+        Updated_At: new Date().toISOString(), Updated_By: actor.sub
+      };
+      appendRow_('Settings', newRow);
+      logAudit_(actor.sub, actor.role, 'CREATE', 'Settings', key, null, newRow);
+      return newRow;
+    }
     var updated = updateRow_('Settings', row._row, {
       Setting_Value: value, Updated_At: new Date().toISOString(), Updated_By: actor.sub
     });

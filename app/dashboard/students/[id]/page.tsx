@@ -1,9 +1,9 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { DashboardShell } from '@/components/dashboard/DashboardShell'
-import { Card, CardHeader, CardBody, Badge, Button, StatCard, Alert, Spinner } from '@/components/ui'
+import { Card, CardHeader, CardBody, Badge, Button, Input, StatCard, Alert, Spinner } from '@/components/ui'
 import { gasGet, IS_DEMO } from '@/lib/gasClient'
 import { fmt, fmtDate, statusBadge } from '@/lib/utils/helpers'
 
@@ -48,7 +48,22 @@ const DEMO_ATT: AttLog[] = Array.from({length:20},(_,i)=>{
   return { date:d.toISOString().slice(0,10), subject:subjs[i%3], status:statuses[i%statuses.length], session_id:`SES00000${i+1}` }
 })
 
-// SVG QR placeholder rendered inline
+interface FormVaultEntry {
+  Form_ID: string; Form_Name: string; Board_or_Body: string; Exam_Year: string
+  User_ID: string; Password_Hint: string; Application_Number: string
+  Admit_Card_URL: string; Result_URL: string; Status: string; Remarks: string
+  Created_At: string
+}
+
+interface VaultFormState { Form_Name:string; Board_or_Body:string; Exam_Year:string; User_ID:string; Password_Hint:string; Application_Number:string; Remarks:string; Status:string }
+
+const DEMO_VAULT: FormVaultEntry[] = [
+  { Form_ID:'FV001', Form_Name:'JEE Main 2026', Board_or_Body:'NTA', Exam_Year:'2026', User_ID:'rahul2006@jee', Password_Hint:'R@hul2006', Application_Number:'260110012345', Admit_Card_URL:'', Result_URL:'', Status:'Applied', Remarks:'Session 1 — Jan 2026', Created_At: new Date().toISOString() },
+  { Form_ID:'FV002', Form_Name:'JEE Advanced 2026', Board_or_Body:'IIT Bombay', Exam_Year:'2026', User_ID:'', Password_Hint:'', Application_Number:'', Admit_Card_URL:'', Result_URL:'', Status:'Not yet applied', Remarks:'Eligible after JEE Main result', Created_At: new Date().toISOString() },
+]
+
+const VAULT_STATUS_V: Record<string,'success'|'info'|'warning'|'default'> = { Applied:'info', 'Admit Card Downloaded':'success', 'Exam Appeared':'success', Qualified:'success', 'Not Qualified':'default', 'Not yet applied':'default' }
+
 function MiniQr({ value }: { value: string }) {
   const [svg, setSvg] = useState<string|null>(null)
   useEffect(() => {
@@ -62,7 +77,9 @@ function MiniQr({ value }: { value: string }) {
 export default function StudentProfilePage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
-  const [tab, setTab] = useState<'overview'|'attendance'|'fees'|'timeline'>('overview')
+  const [tab, setTab] = useState<'overview'|'attendance'|'fees'|'vault'|'timeline'>('overview')
+  const [showAddVault, setShowAddVault] = useState(false)
+  const [vaultForm, setVaultForm] = useState<VaultFormState>({ Form_Name:'', Board_or_Body:'', Exam_Year:new Date().getFullYear().toString(), User_ID:'', Password_Hint:'', Application_Number:'', Remarks:'', Status:'Applied' })
 
   const { data: s, isLoading } = useQuery({
     queryKey: ['student', id],
@@ -85,11 +102,18 @@ export default function StudentProfilePage() {
   })
   const attendance = attLog ?? (IS_DEMO ? DEMO_ATT : [])
 
+  const { data: vaultData } = useQuery({
+    queryKey: ['form-vault', id],
+    queryFn: () => gasGet<FormVaultEntry[]>('listFormVault', { student_id: id }),
+    enabled: !IS_DEMO && !!id,
+  })
+  const vault = vaultData ?? (IS_DEMO ? DEMO_VAULT : [])
+
   if (isLoading) return <DashboardShell><div className="flex justify-center py-24"><Spinner size="lg" /></div></DashboardShell>
   if (!student)  return <DashboardShell><div className="p-8 text-center text-gray-500">Student not found.</div></DashboardShell>
 
   const att = student.Attendance_Pct
-  const TABS = ['overview','attendance','fees','timeline'] as const
+  const TABS = ['overview','attendance','fees','vault','timeline'] as const
 
   return (
     <DashboardShell title="Student Profile">
@@ -154,7 +178,7 @@ export default function StudentProfilePage() {
           {TABS.map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${tab===t ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
-              {t}
+              {t === 'vault' ? '📝 Form Vault' : t}
             </button>
           ))}
         </div>
@@ -212,6 +236,24 @@ export default function StudentProfilePage() {
               </CardBody>
             </Card>
             <Card>
+              <CardHeader><h2 className="font-bold text-gray-800 dark:text-gray-200">Academic Background</h2></CardHeader>
+              <CardBody>
+                <div className="space-y-2.5 text-sm">
+                  {[
+                    ['School Name',        (student as {School_Name?:string}).School_Name || '—'],
+                    ['Tuition Centre',     (student as {Tuition_Centre?:string}).Tuition_Centre || '—'],
+                    ['Class 10 %',         (student as {Class10_Percentage?:string}).Class10_Percentage ? `${(student as {Class10_Percentage?:string}).Class10_Percentage}%` : '—'],
+                    ['Class 12 %',         (student as {Class12_Percentage?:string}).Class12_Percentage ? `${(student as {Class12_Percentage?:string}).Class12_Percentage}%` : '—'],
+                  ].map(([l,v]) => (
+                    <div key={l} className="flex gap-2">
+                      <span className="text-gray-400 text-xs w-28 shrink-0 mt-0.5">{l}</span>
+                      <span className="font-medium text-gray-800 dark:text-gray-200 text-xs">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+            <Card>
               <CardHeader><h2 className="font-bold text-gray-800 dark:text-gray-200">Attendance Summary</h2></CardHeader>
               <CardBody>
                 <div className="space-y-3">
@@ -230,6 +272,99 @@ export default function StudentProfilePage() {
                 </div>
               </CardBody>
             </Card>
+          </div>
+        )}
+        {tab === 'vault' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-black text-gray-900 dark:text-white">📝 Form Vault</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Track exam applications, credentials, admit cards, and results</p>
+              </div>
+              <Button size="sm" onClick={() => setShowAddVault(true)}>+ Add Form</Button>
+            </div>
+
+            {vault.length === 0 && (
+              <div className="text-center py-12">
+                <div className="text-4xl mb-3">📝</div>
+                <p className="font-bold text-gray-700 dark:text-gray-300">No forms tracked yet</p>
+                <p className="text-sm text-gray-400 mt-1">Add exam applications to keep credentials and results in one place.</p>
+                <Button className="mt-4" onClick={() => setShowAddVault(true)}>+ Add First Form</Button>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {vault.map(v => (
+                <Card key={v.Form_ID}>
+                  <CardBody>
+                    <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-xl shrink-0">📋</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <h3 className="text-sm font-bold text-gray-900 dark:text-white">{v.Form_Name}</h3>
+                          <Badge variant={(VAULT_STATUS_V[v.Status] || 'default') as 'success'|'info'|'warning'|'default'}>{v.Status}</Badge>
+                        </div>
+                        <p className="text-xs text-gray-500">{v.Board_or_Body} · {v.Exam_Year}</p>
+                        {v.Application_Number && <p className="text-xs text-gray-500 mt-0.5">App No: <span className="font-mono font-bold text-gray-800 dark:text-gray-200">{v.Application_Number}</span></p>}
+                        {v.User_ID && <p className="text-xs text-gray-500 mt-0.5">Login ID: <span className="font-mono text-gray-800 dark:text-gray-200">{v.User_ID}</span></p>}
+                        {v.Password_Hint && <p className="text-xs text-gray-400 mt-0.5">Password hint: <span className="italic">{v.Password_Hint}</span></p>}
+                        {v.Remarks && <p className="text-xs text-gray-400 mt-0.5 italic">{v.Remarks}</p>}
+                        <div className="flex gap-3 mt-2">
+                          {v.Admit_Card_URL ? (
+                            <a href={v.Admit_Card_URL} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline font-medium">📄 Admit Card</a>
+                          ) : (
+                            <span className="text-xs text-gray-300 dark:text-gray-600">No admit card yet</span>
+                          )}
+                          {v.Result_URL && <a href={v.Result_URL} target="_blank" rel="noopener noreferrer" className="text-xs text-emerald-600 hover:underline font-medium">🏆 Result</a>}
+                        </div>
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
+              ))}
+            </div>
+
+            {/* Add form modal */}
+            {showAddVault && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md border border-gray-100 dark:border-gray-800">
+                  <div className="flex items-center justify-between px-6 py-4 border-b dark:border-gray-800">
+                    <h2 className="font-bold text-gray-900 dark:text-white">📝 Add to Form Vault</h2>
+                    <button onClick={() => setShowAddVault(false)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+                  </div>
+                  <div className="px-6 py-4 space-y-3 max-h-[70vh] overflow-y-auto">
+                    <Input label="Exam / Form Name *" value={vaultForm.Form_Name} onChange={e=>setVaultForm(f=>({...f,Form_Name:e.target.value}))} placeholder="e.g. JEE Main 2026" />
+                    <div className="grid grid-cols-2 gap-3">
+                      <Input label="Board / Conducting Body" value={vaultForm.Board_or_Body} onChange={e=>setVaultForm(f=>({...f,Board_or_Body:e.target.value}))} placeholder="NTA, CBSE, etc." />
+                      <Input label="Exam Year" value={vaultForm.Exam_Year} onChange={e=>setVaultForm(f=>({...f,Exam_Year:e.target.value}))} placeholder="2026" />
+                    </div>
+                    <Input label="Login ID / Username" value={vaultForm.User_ID} onChange={e=>setVaultForm(f=>({...f,User_ID:e.target.value}))} placeholder="Application login ID" />
+                    <Input label="Password Hint" value={vaultForm.Password_Hint} onChange={e=>setVaultForm(f=>({...f,Password_Hint:e.target.value}))} placeholder="Store a hint (not the actual password)" />
+                    <Input label="Application Number" value={vaultForm.Application_Number} onChange={e=>setVaultForm(f=>({...f,Application_Number:e.target.value}))} placeholder="If already applied" />
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Status</label>
+                      <select value={vaultForm.Status} onChange={e=>setVaultForm(f=>({...f,Status:e.target.value}))}
+                        className="w-full rounded-xl border px-3 py-2.5 text-sm outline-none border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-blue-500">
+                        {['Not yet applied','Applied','Admit Card Downloaded','Exam Appeared','Qualified','Not Qualified'].map(s=><option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Remarks</label>
+                      <textarea value={vaultForm.Remarks} onChange={e=>setVaultForm(f=>({...f,Remarks:e.target.value}))} rows={2} placeholder="Any notes…"
+                        className="w-full rounded-xl border px-3 py-2.5 text-sm outline-none border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:border-blue-500 resize-none" />
+                    </div>
+                    {IS_DEMO && <Alert variant="info">Demo mode — entry will not be saved to backend.</Alert>}
+                    <div className="flex gap-2 pt-1">
+                      <Button className="flex-1" disabled={!vaultForm.Form_Name} onClick={() => {
+                        setShowAddVault(false)
+                        setVaultForm({ Form_Name:'', Board_or_Body:'', Exam_Year:new Date().getFullYear().toString(), User_ID:'', Password_Hint:'', Application_Number:'', Remarks:'', Status:'Applied' })
+                      }}>Save to Vault</Button>
+                      <Button variant="secondary" onClick={() => setShowAddVault(false)}>Cancel</Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

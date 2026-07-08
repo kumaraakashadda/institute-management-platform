@@ -13,11 +13,11 @@ const TEMPLATES = [
     icon: '🎓',
     description: 'Bulk add or update student records',
     color: '#2563EB',
-    columns: ['Full_Name','DOB','Gender','Phone','Email','Parent_Name','Parent_Phone','Centre','Course','Batch','Target_Year','Segment','Admission_Date'],
+    columns: ['Full_Name','DOB','Gender','Phone','Email','Parent_Name','Parent_Phone','Centre','Course','Batch','Target_Year','Segment','Admission_Date','School_Name','Tuition_Centre','Class10_Percentage','Class12_Percentage'],
     required: ['Full_Name','Phone','Centre','Course','Batch'],
     sampleRows: [
-      ['Rahul Sharma','2006-05-12','Male','9876543210','rahul@email.com','Suresh Sharma','9876543200','Delhi Rohini','JEE Advanced','JEE-2026-A','2026','Classroom','2024-04-01'],
-      ['Priya Singh','2007-03-22','Female','9876543211','priya@email.com','Amit Singh','9876543201','Delhi Dwarka','NEET','NEET-2026-B','2026','Online','2024-04-02'],
+      ['Rahul Sharma','2006-05-12','Male','9876543210','rahul@email.com','Suresh Sharma','9876543200','Delhi Rohini','JEE Advanced','JEE-2026-A','2026','Classroom','2024-04-01','Delhi Public School','ABC Tuition','88.5',''],
+      ['Priya Singh','2007-03-22','Female','9876543211','priya@email.com','Amit Singh','9876543201','Delhi Dwarka','NEET','NEET-2026-B','2026','Online','2024-04-02','Kendriya Vidyalaya','','','72.3'],
     ],
   },
   {

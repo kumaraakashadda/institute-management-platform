@@ -78,6 +78,13 @@ function handleRequest_(action, data, token) {
         return ok_(listSettings_());
       case 'updateSetting':
         return ok_(updateSetting_(data.key, data.value, actor));
+      case 'getPublicSettings':
+        // Returns only safe branding keys — no auth required
+        var PUBLIC_KEYS = ['INSTITUTE_NAME','INSTITUTE_EMAIL','INSTITUTE_PHONE','INSTITUTE_WEBSITE','BRAND_COLOUR','INSTITUTE_LOGO_URL','ACADEMIC_YEAR'];
+        var allSettings = readAll_('Settings');
+        var pub = {};
+        allSettings.forEach(function(s){ if (PUBLIC_KEYS.indexOf(s.Setting_Key) !== -1) pub[s.Setting_Key] = s.Setting_Value; });
+        return ok_(pub);
       case 'listFeatureFlags':
         return ok_(listFeatureFlags_());
       case 'toggleFeatureFlag':
@@ -120,6 +127,32 @@ function handleRequest_(action, data, token) {
       // ── Audit Log ─────────────────────────────────────────────────────────
       case 'getAuditLog':
         return ok_(getAuditLog_(data.filters, actor));
+
+      // ── Form Vault ───────────────────────────────────────────────────────
+      case 'listFormVault':
+        return ok_(readAll_('Form_Vault').filter(function(r){ return String(r.Student_ID) === String(data.student_id); }));
+      case 'createFormEntry': {
+        var fvId = nextId_('Form_Vault','FV','Form_ID');
+        var fvRow = Object.assign({ Form_ID:fvId, Student_ID:data.student_id, Created_At:new Date().toISOString(), Updated_At:new Date().toISOString() }, data.fields);
+        appendRow_('Form_Vault', fvRow);
+        logAudit_(actor.sub, actor.role, 'CREATE', 'Form_Vault', fvId, null, fvRow);
+        return ok_(fvRow);
+      }
+      case 'updateFormEntry': {
+        var fvRow2 = findOne_('Form_Vault','Form_ID', data.form_id);
+        if (!fvRow2) throw new Error('Form entry not found.');
+        var patch2 = Object.assign({}, data.fields, { Updated_At: new Date().toISOString() });
+        var updated2 = updateRow_('Form_Vault', fvRow2._row, patch2);
+        logAudit_(actor.sub, actor.role, 'UPDATE', 'Form_Vault', data.form_id, fvRow2, updated2);
+        return ok_(updated2);
+      }
+      case 'deleteFormEntry': {
+        var fvRow3 = findOne_('Form_Vault','Form_ID', data.form_id);
+        if (!fvRow3) throw new Error('Form entry not found.');
+        softDeleteRow_('Form_Vault', fvRow3._row);
+        logAudit_(actor.sub, actor.role, 'DELETE', 'Form_Vault', data.form_id, fvRow3, null);
+        return ok_(true);
+      }
 
       // ── Payments ──────────────────────────────────────────────────────────
       case 'recordPayment':

@@ -69,7 +69,18 @@ function seedDefaultSettings_() {
     STUDENT_ID_PREFIX: 'STU',
     ADMISSION_ID_PREFIX: 'ADM',
     LATE_FEE_GRACE_DAYS: '3',
-    DUE_REMINDER_DAYS_BEFORE: '3'
+    DUE_REMINDER_DAYS_BEFORE: '3',
+    // Institute branding — editable from Settings page
+    INSTITUTE_NAME: 'My Institute',
+    INSTITUTE_EMAIL: 'info@institute.com',
+    INSTITUTE_PHONE: '',
+    INSTITUTE_ADDRESS: '',
+    INSTITUTE_WEBSITE: '',
+    INSTITUTE_LOGO_URL: '',
+    BRAND_COLOUR: '#2563EB',
+    // Academic year
+    ACADEMIC_YEAR: '2025-26',
+    WORKING_DAYS: 'Mon,Tue,Wed,Thu,Fri,Sat',
   };
   var existing = readAll_('Settings').map(function (r) { return r.Setting_Key; });
   Object.keys(defaults).forEach(function (key) {

@@ -32,8 +32,18 @@ export default function AnnouncementsPage() {
   const [showNew, setShowNew] = useState(false)
   const [filterPriority, setFilterPriority] = useState('')
   const [filterRole, setFilterRole] = useState('')
-  const [form, setForm] = useState({ Title:'', Body:'', Target_Role:'All', Centre:'All Centres', Priority:'Normal', Expiry_Date:'' })
+  const [form, setForm] = useState({ Title:'', Body:'', Target_Role:'All', Centre:'All Centres', Target_Batch:'All Batches', Priority:'Normal', Expiry_Date:'' })
   const set = (k:string) => (e:React.ChangeEvent<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>) => setForm(f=>({...f,[k]:e.target.value}))
+
+  // Demo batches per centre
+  const CENTRE_BATCHES: Record<string,string[]> = {
+    'All Centres':  [],
+    'Delhi Rohini': ['All Batches','JEE-2026-A','JEE-2026-B','JEE-2027-A','NEET-2026-A','NEET-2026-B'],
+    'Delhi Dwarka': ['All Batches','JEE-2026-C','NEET-2026-C','FND-2025-A'],
+    'Noida Sec18':  ['All Batches','JEE-2026-D','NEET-2026-D'],
+    'Gurgaon':      ['All Batches','JEE-2026-E','NEET-2026-E'],
+  }
+  const batchOptions = CENTRE_BATCHES[form.Centre] ?? []
 
   const { data } = useQuery({
     queryKey: ['announcements'],
@@ -50,7 +60,7 @@ export default function AnnouncementsPage() {
 
   const { mutateAsync: create, isPending } = useMutation({
     mutationFn: () => IS_DEMO ? Promise.resolve() : gasPost('createAnnouncement', { fields: form }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['announcements'] }); setShowNew(false); setForm({ Title:'', Body:'', Target_Role:'All', Centre:'All Centres', Priority:'Normal', Expiry_Date:'' }) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['announcements'] }); setShowNew(false); setForm({ Title:'', Body:'', Target_Role:'All', Centre:'All Centres', Target_Batch:'All Batches', Priority:'Normal', Expiry_Date:'' }) },
   })
 
   return (
@@ -106,6 +116,7 @@ export default function AnnouncementsPage() {
                       <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{a.Body}</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-0 mt-2 text-[11px] text-gray-400">
                         <span>📍 {a.Centre}</span>
+                        {(a as {Target_Batch?:string}).Target_Batch && (a as {Target_Batch?:string}).Target_Batch !== 'All Batches' && <span>📚 {(a as {Target_Batch?:string}).Target_Batch}</span>}
                         <span>✍️ {a.Created_By}</span>
                         <span>🕐 {fmtDate(a.Created_At)}</span>
                         {a.Expiry_Date && <span>⏳ Expires {fmtDate(a.Expiry_Date)}</span>}
@@ -145,9 +156,14 @@ export default function AnnouncementsPage() {
                 </Select>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Select label="Centre" value={form.Centre} onChange={set('Centre')}>
+                <Select label="Centre" value={form.Centre} onChange={e => { set('Centre')(e); setForm(f=>({...f,Target_Batch:'All Batches'})) }}>
                   <option>All Centres</option>
                   {['Delhi Rohini','Delhi Dwarka','Noida Sec18','Gurgaon'].map(c => <option key={c}>{c}</option>)}
+                </Select>
+                <Select label="Target Batch" value={form.Target_Batch} onChange={set('Target_Batch')} disabled={form.Centre==='All Centres'}>
+                  {batchOptions.length > 0
+                    ? batchOptions.map(b => <option key={b}>{b}</option>)
+                    : <option>Select centre first</option>}
                 </Select>
                 <Input label="Expiry Date" type="date" value={form.Expiry_Date} onChange={set('Expiry_Date')} />
               </div>

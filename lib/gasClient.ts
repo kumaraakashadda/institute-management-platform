@@ -8,8 +8,18 @@
  */
 
 export const GAS_URL = process.env.NEXT_PUBLIC_GAS_URL || ''
-// IS_DEMO is true when either no backend is configured, OR the user is logged in with a demo account
-export const IS_DEMO = !GAS_URL || (typeof window !== 'undefined' && (localStorage.getItem('imp_token') || '').startsWith('demo-token'))
+
+// IS_DEMO is evaluated at call-time (not module load time) so it correctly
+// reflects whether the current user logged in with a demo account.
+// Called as IS_DEMO or isDemo() — both patterns work.
+export function isDemo(): boolean {
+  if (!GAS_URL) return true
+  if (typeof window === 'undefined') return true
+  return tok().startsWith('demo-token')
+}
+// Backward-compat constant for SSR/static contexts — components that need
+// reactivity should call isDemo() inside useEffect / event handlers.
+export const IS_DEMO = !GAS_URL
 
 export interface GasResponse<T = unknown> {
   success: boolean
@@ -35,7 +45,7 @@ export async function gasPost<T = unknown>(
   const res = await fetch(GAS_URL, {
     method: 'POST',
     body: JSON.stringify({ action, token: tok(), data }),
-    headers: { 'Content-Type': 'text/plain' }, // avoids CORS preflight
+    headers: { 'Content-Type': 'text/plain' },
   })
   if (!res.ok) throw new Error(`Network error: ${res.status}`)
   const json: GasResponse<T> = await res.json()
